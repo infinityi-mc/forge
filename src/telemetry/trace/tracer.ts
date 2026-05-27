@@ -123,7 +123,10 @@ export const createTracer: CreateTracer = (options: TracerOptions): Tracer => {
     return span;
   }
 
-  function startSpan(name: string, opts?: SpanOptions): Span {
+  function startSpanInternal(
+    name: string,
+    opts?: SpanOptions,
+  ): { span: Span; state: ActiveSpanState } {
     const parent = opts?.root ? undefined : currentContext();
     const traceId = parent?.traceId ?? genTraceId();
     const spanId = genSpanId();
@@ -132,8 +135,10 @@ export const createTracer: CreateTracer = (options: TracerOptions): Tracer => {
     const attributes: SpanAttributes = { ...(opts?.attributes ?? {}) };
     const links: SpanLink[] = [...(opts?.links ?? [])];
 
+    // Pass the *computed* traceId (never undefined) so deterministic
+    // samplers like `ratioSampler` can hash it for root spans.
     const decision = sampler.shouldSample(
-      parent?.traceId,
+      traceId,
       parent?.spanId,
       parent?.traceFlags,
       name,
@@ -179,7 +184,11 @@ export const createTracer: CreateTracer = (options: TracerOptions): Tracer => {
     } catch {
       // ignore
     }
-    return span;
+    return { span, state };
+  }
+
+  function startSpan(name: string, opts?: SpanOptions): Span {
+    return startSpanInternal(name, opts).span;
   }
 
   function withSpan<T>(
@@ -187,19 +196,23 @@ export const createTracer: CreateTracer = (options: TracerOptions): Tracer => {
     fn: (span: Span) => T,
     opts?: SpanOptions,
   ): T {
-    const span = startSpan(name, opts);
+    const { span, state } = startSpanInternal(name, opts);
     const parent = currentContext();
+    // Use the span's *computed* traceFlags so the propagated context
+    // honors the sampling decision. Without this, dropped spans would
+    // still advertise SAMPLED=1 to children + outgoing requests.
     const ctx: TelemetryContext = parent
       ? {
           ...parent,
           traceId: span.traceId,
           spanId: span.spanId,
           parentId: parent.spanId,
+          traceFlags: state.traceFlags,
         }
       : {
           traceId: span.traceId,
           spanId: span.spanId,
-          traceFlags: TRACE_FLAGS.SAMPLED,
+          traceFlags: state.traceFlags,
           baggage: {},
         };
     return contextStorage.run(ctx, () => {

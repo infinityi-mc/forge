@@ -212,8 +212,11 @@ export class MetricStore {
           for (const s of inst.series.values()) {
             s.count = 0;
             s.sum = 0;
-            s.min = 0;
-            s.max = 0;
+            // Reset min/max to extremes so the first value in the next
+            // window unconditionally seeds both (the all-positive
+            // window would never set min if we reset to 0).
+            s.min = Number.POSITIVE_INFINITY;
+            s.max = Number.NEGATIVE_INFINITY;
             s.bucketCounts.fill(0);
             s.startTime = collectedAt;
           }

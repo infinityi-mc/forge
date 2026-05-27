@@ -165,6 +165,41 @@ describe("samplers", () => {
     expect(exporter.spans).toHaveLength(1);
   });
 
+  test("ratioSampler with mid rate does not drop all root spans", () => {
+    // Regression: previously the tracer passed `parent?.traceId` to the
+    // sampler, which is undefined for root spans, so ratioSampler
+    // always returned drop. Now it passes the computed traceId.
+    let kept = 0;
+    for (let i = 0; i < 200; i++) {
+      const { tracer, exporter } = makeTracer({
+        sampler: ratioSampler({ rate: 0.5 }),
+      });
+      tracer.startSpan("op").end();
+      kept += exporter.spans.length;
+    }
+    // With rate=0.5 over 200 trials we expect roughly half kept. The
+    // pre-fix behavior was 0.
+    expect(kept).toBeGreaterThan(50);
+    expect(kept).toBeLessThan(150);
+  });
+
+  test("dropped withSpan clears SAMPLED bit in propagated context", () => {
+    // Regression: withSpan used to hardcode TRACE_FLAGS.SAMPLED in the
+    // root-context branch, so a dropped parent still told children to
+    // record via parentBasedSampler.
+    const { tracer, exporter } = makeTracer({
+      sampler: parentBasedSampler({
+        root: alwaysOffSampler(),
+        parentSampled: alwaysOnSampler(),
+        parentNotSampled: alwaysOffSampler(),
+      }),
+    });
+    tracer.withSpan("parent", () => {
+      tracer.withSpan("child", () => {});
+    });
+    expect(exporter.spans).toHaveLength(0);
+  });
+
   test("parentBased — root delegate runs when there is no parent", () => {
     const { tracer, exporter } = makeTracer({
       sampler: parentBasedSampler({ root: alwaysOnSampler() }),

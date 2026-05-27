@@ -139,6 +139,31 @@ describe("createMeter — histogram", () => {
     expect(m.points[0]!.boundaries).toEqual([10, 50, 100]);
   });
 
+  test("delta temporality preserves min/max across windows", async () => {
+    // Regression: previously the delta reset set min/max to 0, so the
+    // second window's all-positive values left min stuck at 0.
+    const exp = recordingMeterExporter();
+    const meter = createMeter({
+      resource,
+      exporter: exp,
+      intervalMs: 0,
+      temporality: "delta",
+    });
+    const h = meter.createHistogram("x", { boundaries: [10, 100] });
+    h.record(5);
+    h.record(50);
+    await meter.collect();
+    h.record(80);
+    h.record(120);
+    await meter.collect();
+    await meter.shutdown();
+
+    const second = exp.batches[1]!.metrics[0]!;
+    const p = second.points[0] as HistogramPoint;
+    expect(p.min).toBe(80);
+    expect(p.max).toBe(120);
+  });
+
   test("ignores NaN / non-finite values", async () => {
     const exp = recordingMeterExporter();
     const meter = createMeter({ resource, exporter: exp, intervalMs: 0 });

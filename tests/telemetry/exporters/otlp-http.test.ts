@@ -22,10 +22,13 @@ function makeFetch(opts: {
   status?: number;
   failTimes?: number;
   captured: Captured[];
-} = { captured: [] }) {
+} = { captured: [] }): typeof fetch {
   const status = opts.status ?? 200;
   let failed = 0;
-  const fakeFetch: typeof fetch = async (input, init) => {
+  const fakeFetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
     const url = typeof input === "string" ? input : (input as Request).url;
     const headers: Record<string, string> = {};
     if (init?.headers && !(init.headers instanceof Headers)) {
@@ -43,7 +46,7 @@ function makeFetch(opts: {
       return new Response(null, { status: 503 });
     }
     return new Response(null, { status });
-  };
+  }) as typeof fetch;
   return fakeFetch;
 }
 
@@ -58,7 +61,7 @@ describe("otlpHttpLogExporter", () => {
       }),
     });
     log.info("hi", { user: "alice" });
-    await log.flush();
+    await log.flush?.();
 
     expect(captured).toHaveLength(1);
     const body = captured[0]!.body as { resourceLogs: unknown[] };
