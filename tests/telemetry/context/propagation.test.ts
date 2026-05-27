@@ -47,6 +47,25 @@ describe("parseTraceparent", () => {
       ),
     ).toBeUndefined();
   });
+
+  test("rejects version 00 with trailing fields (must be exactly 4)", () => {
+    expect(
+      parseTraceparent(
+        "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-extra",
+      ),
+    ).toBeUndefined();
+  });
+
+  test("accepts unknown future version with trailing fields per W3C §3.2.2.2 forward-compat", () => {
+    const parsed = parseTraceparent(
+      "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-newfield",
+    );
+    expect(parsed).toEqual({
+      traceId: "0af7651916cd43dd8448eb211c80319c",
+      spanId: "b7ad6b7169203331",
+      traceFlags: 1,
+    });
+  });
 });
 
 describe("formatTraceparent", () => {
@@ -80,6 +99,12 @@ describe("parseBaggage / formatBaggage", () => {
   test("round-trips simple keys", () => {
     const value = formatBaggage({ a: "1", b: "two" });
     expect(parseBaggage(value)).toEqual({ a: "1", b: "two" });
+  });
+
+  test("round-trips keys containing characters that encodeURIComponent escapes", () => {
+    const baggage = { "my+key": "v1", "x#y": "v2", "a&b": "v3" };
+    const value = formatBaggage(baggage);
+    expect(parseBaggage(value)).toEqual(baggage);
   });
 
   test("URL-decodes values", () => {

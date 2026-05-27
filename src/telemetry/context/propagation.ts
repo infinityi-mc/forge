@@ -115,13 +115,18 @@ interface ParsedTraceparent {
 
 /**
  * Parse a W3C `traceparent` header value. Returns `undefined` for any
- * malformed or unsupported value (unknown version, invalid ids, etc.).
+ * malformed or unsupported value (invalid version, invalid ids, etc.).
  *
- * Format: `<version>-<trace-id>-<span-id>-<trace-flags>`.
+ * Format: `<version>-<trace-id>-<span-id>-<trace-flags>[-future-fields…]`.
+ *
+ * Forward compatibility (spec §3.2.2.2): for version `00`, exactly
+ * four fields are required. For any unknown future version, additional
+ * trailing dash-delimited fields MUST be tolerated — we parse the
+ * first four and ignore the rest. Version `ff` is reserved as invalid.
  */
 export function parseTraceparent(value: string): ParsedTraceparent | undefined {
   const parts = value.trim().split("-");
-  if (parts.length !== 4) return undefined;
+  if (parts.length < 4) return undefined;
   const [version, traceId, spanId, flagsStr] = parts as [
     string,
     string,
@@ -129,9 +134,11 @@ export function parseTraceparent(value: string): ParsedTraceparent | undefined {
     string,
   ];
 
-  // Per spec: version "ff" is invalid; any other 2-hex version that we
-  // don't recognize is forward-compatibly treated like version "00".
+  // Per spec: version "ff" is invalid. Version "00" must be exactly
+  // four fields. Any other 2-hex version is forward-compatibly parsed
+  // by ignoring trailing fields.
   if (!/^[0-9a-f]{2}$/.test(version) || version === "ff") return undefined;
+  if (version === "00" && parts.length !== 4) return undefined;
   if (!isValidTraceId(traceId)) return undefined;
   if (!isValidSpanId(spanId)) return undefined;
   if (!/^[0-9a-f]{2}$/.test(flagsStr)) return undefined;
@@ -169,15 +176,18 @@ export function parseBaggage(value: string): Record<string, string> {
     const kv = semi === -1 ? entry : entry.slice(0, semi);
     const eq = kv.indexOf("=");
     if (eq <= 0) continue;
-    const key = kv.slice(0, eq).trim();
+    const rawKey = kv.slice(0, eq).trim();
     const rawVal = kv.slice(eq + 1).trim();
-    if (key.length === 0) continue;
+    if (rawKey.length === 0) continue;
+    let key: string;
     let decoded: string;
     try {
+      key = decodeURIComponent(rawKey);
       decoded = decodeURIComponent(rawVal);
     } catch {
       continue;
     }
+    if (key.length === 0) continue;
     out[key] = decoded;
   }
   return out;
