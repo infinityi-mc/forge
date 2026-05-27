@@ -126,6 +126,14 @@
     "./telemetry/exporters/prometheus": {
       "import": "./dist/telemetry/exporters/prometheus/index.js",
       "types": "./dist/telemetry/exporters/prometheus/index.d.ts"
+    },
+    "./telemetry/instrumentation/fetch": {
+      "import": "./dist/telemetry/instrumentation/fetch/index.js",
+      "types": "./dist/telemetry/instrumentation/fetch/index.d.ts"
+    },
+    "./telemetry/testing": {
+      "import": "./dist/telemetry/testing/index.js",
+      "types": "./dist/telemetry/testing/index.d.ts"
     }
   },
   "devDependencies": {
@@ -135,7 +143,7 @@
     "typescript": "^6"
   },
   "scripts": {
-    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts --outdir dist --root src --splitting --target node",
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts --outdir dist --root src --splitting --target node",
     "check": "tsc --noEmit",
     "test": "bun test"
   }

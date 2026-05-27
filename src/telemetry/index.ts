@@ -36,3 +36,13 @@
 
 export { TelemetryError } from "./errors";
 export type { Resource } from "./types";
+export { initTelemetry } from "./init";
+export type {
+  InitTelemetryLogOptions,
+  InitTelemetryMeterOptions,
+  InitTelemetryOptions,
+  InitTelemetryTraceOptions,
+  InitTelemetryTraceProcessor,
+  Telemetry,
+  TelemetryFlushResult,
+} from "./init";
