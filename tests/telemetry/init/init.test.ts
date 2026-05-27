@@ -153,6 +153,56 @@ describe("initTelemetry", () => {
     const result = await t.shutdown();
     expect(result.log).toEqual({ ok: false, error: expect.any(Error) });
   });
+
+  test("shutdown() still invokes log shutdown when flush throws (no resource leak)", async () => {
+    // Regression: if flush rejected, the single-runSafe wrapper used
+    // to swallow the rejection before shutdown was reached, leaking
+    // exporter resources (HTTP connections, file handles, …).
+    let flushCalls = 0;
+    let shutdownCalls = 0;
+    const logExp = recordingExporter({
+      onFlush: () => {
+        flushCalls++;
+        throw new Error("flush boom");
+      },
+      onShutdown: () => {
+        shutdownCalls++;
+      },
+    });
+    const t = initTelemetry({
+      resource,
+      log: { exporter: logExp },
+    });
+    const result = await t.shutdown();
+    expect(flushCalls).toBe(1);
+    // Most important: shutdown was still called despite flush failing.
+    expect(shutdownCalls).toBe(1);
+    // …and the flush failure is surfaced to the caller.
+    expect(result.log?.ok).toBe(false);
+  });
+
+  test("shutdown() reports both failures via AggregateError when flush and shutdown both throw", async () => {
+    const logExp = recordingExporter({
+      onFlush: () => {
+        throw new Error("flush boom");
+      },
+      onShutdown: () => {
+        throw new Error("shutdown boom");
+      },
+    });
+    const t = initTelemetry({
+      resource,
+      log: { exporter: logExp },
+    });
+    const result = await t.shutdown();
+    expect(result.log?.ok).toBe(false);
+    const err = (result.log as { ok: false; error: unknown }).error;
+    expect(err).toBeInstanceOf(AggregateError);
+    const errors = (err as AggregateError).errors;
+    expect(errors).toHaveLength(2);
+    expect((errors[0] as Error).message).toBe("flush boom");
+    expect((errors[1] as Error).message).toBe("shutdown boom");
+  });
 });
 
 describe("createTestTelemetry", () => {

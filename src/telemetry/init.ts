@@ -180,11 +180,14 @@ export function initTelemetry(options: InitTelemetryOptions): Telemetry {
       // exporter releases its transport. `logger.shutdown` delegates
       // to the wrapped exporter's `shutdown` so resources (HTTP
       // connections in the OTLP exporter, file handles, …) are
-      // properly released.
-      out.log = await runSafe(async () => {
-        if (logger.flush) await logger.flush();
-        if (logger.shutdown) await logger.shutdown();
-      });
+      // properly released. We must call `shutdown` even when `flush`
+      // throws — otherwise a transient flush failure leaves exporter
+      // resources leaked.
+      const flushErr = logger.flush ? await captureError(() => logger.flush!()) : undefined;
+      const shutdownErr = logger.shutdown
+        ? await captureError(() => logger.shutdown!())
+        : undefined;
+      out.log = combineOutcomes(flushErr, shutdownErr);
     }
     if (meter) out.meter = await runSafe(() => meter.shutdown());
     if (traceProcessor) out.trace = await runSafe(() => traceProcessor!.shutdown());
@@ -232,4 +235,30 @@ async function runSafe(
   } catch (error) {
     return { ok: false, error };
   }
+}
+
+async function captureError(fn: () => Promise<void>): Promise<unknown> {
+  try {
+    await fn();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+function combineOutcomes(
+  flushErr: unknown,
+  shutdownErr: unknown,
+): { ok: true } | { ok: false; error: unknown } {
+  if (flushErr === undefined && shutdownErr === undefined) return { ok: true };
+  if (flushErr !== undefined && shutdownErr !== undefined) {
+    // Surface both failures so the host application has the full
+    // picture. AggregateError is part of the standard runtime since
+    // Node 15 / Bun 1.x.
+    return {
+      ok: false,
+      error: new AggregateError([flushErr, shutdownErr], "log flush and shutdown both failed"),
+    };
+  }
+  return { ok: false, error: flushErr ?? shutdownErr };
 }
