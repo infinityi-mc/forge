@@ -2,7 +2,9 @@
   "name": "@infinityi/forge",
   "version": "0.0.1",
   "description": "The boring infrastructure layer your business logic deserves. An opinionated, composable, Bun-first toolkit for distributed systems: telemetry, resilience, config, data, messaging, http, security, and lifecycle.",
-  "module": "index.ts",
+  "module": "src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/your-org/forge#readme",
@@ -35,14 +37,58 @@
     "bun": ">=1.3.0"
   },
   "files": [
-    "index.ts",
+    "dist",
+    "src",
     "README.md",
     "LICENSE"
   ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./telemetry": {
+      "import": "./dist/telemetry/index.js",
+      "types": "./dist/telemetry/index.d.ts"
+    },
+    "./telemetry/context": {
+      "import": "./dist/telemetry/context/index.js",
+      "types": "./dist/telemetry/context/index.d.ts"
+    },
+    "./telemetry/log": {
+      "import": "./dist/telemetry/log/index.js",
+      "types": "./dist/telemetry/log/index.d.ts"
+    },
+    "./telemetry/log/middleware": {
+      "import": "./dist/telemetry/log/middleware/index.js",
+      "types": "./dist/telemetry/log/middleware/index.d.ts"
+    },
+    "./telemetry/log/exporters/stdout": {
+      "import": "./dist/telemetry/log/exporters/stdout/index.js",
+      "types": "./dist/telemetry/log/exporters/stdout/index.d.ts"
+    },
+    "./telemetry/log/exporters/null": {
+      "import": "./dist/telemetry/log/exporters/null/index.js",
+      "types": "./dist/telemetry/log/exporters/null/index.d.ts"
+    },
+    "./telemetry/log/exporters/recording": {
+      "import": "./dist/telemetry/log/exporters/recording/index.js",
+      "types": "./dist/telemetry/log/exporters/recording/index.d.ts"
+    },
+    "./telemetry/log/testing": {
+      "import": "./dist/telemetry/log/testing/index.js",
+      "types": "./dist/telemetry/log/testing/index.d.ts"
+    }
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^6"
+  },
+  "scripts": {
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts --outdir dist --root src --splitting --target node",
+    "check": "tsc --noEmit",
+    "test": "bun test"
   }
 }
