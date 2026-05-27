@@ -17,22 +17,14 @@
 
 import { realClock } from "../clock";
 import { buildInstruments } from "../telemetry/instrumentation";
-import type {
-  Clock,
-  ExecutionContext,
-  Operation,
-} from "../types";
+import type { Clock, ExecutionContext, Operation } from "../types";
 import { RateLimitedError } from "./errors";
 import { SlidingWindowLimiter } from "./sliding-window";
 import { TokenBucket } from "./token-bucket";
-import type {
-  RateLimitOptions,
-  RateLimitPolicy,
-} from "./types";
+import type { RateLimitOptions, RateLimitPolicy } from "./types";
 
 interface AdmissionStrategy {
   acquire(now: number): { waitMs: number };
-  commitWait(now: number): void;
   available(now: number): number;
 }
 
@@ -71,25 +63,28 @@ export function rateLimit(options: RateLimitOptions): RateLimitPolicy {
   ): Promise<T> {
     if (ctx.signal.aborted) throw ctx.signal.reason;
 
-    const now = clock.now();
-    const decision = strategy.acquire(now);
-
     instruments.attempts()?.add(1, { policy: "rate-limit", mode });
 
-    if (decision.waitMs > 0) {
-      if (mode === "throw" || waiting >= maxWaiters) {
-        throw new RateLimitedError(
-          `rate-limit: no token available`,
-          { retryAfterMs: decision.waitMs },
-        );
-      }
-      waiting++;
-      try {
+    let countedAsWaiting = false;
+    try {
+      while (true) {
+        const decision = strategy.acquire(clock.now());
+        if (decision.waitMs <= 0) break;
+
+        if (mode === "throw" || (!countedAsWaiting && waiting >= maxWaiters)) {
+          throw new RateLimitedError(`rate-limit: no token available`, {
+            retryAfterMs: decision.waitMs,
+          });
+        }
+
+        if (!countedAsWaiting) {
+          waiting++;
+          countedAsWaiting = true;
+        }
         await clock.sleep(decision.waitMs, ctx.signal);
-        strategy.commitWait(clock.now());
-      } finally {
-        waiting = Math.max(0, waiting - 1);
       }
+    } finally {
+      if (countedAsWaiting) waiting = Math.max(0, waiting - 1);
     }
 
     return op(ctx);
@@ -120,9 +115,7 @@ function buildStrategy(
     }
     const burst = algo.burst ?? algo.tokensPerSecond;
     if (!Number.isFinite(burst) || burst < 1) {
-      throw new RangeError(
-        `rateLimit: burst must be >= 1, got ${burst}`,
-      );
+      throw new RangeError(`rateLimit: burst must be >= 1, got ${burst}`);
     }
     return new TokenBucket(algo.tokensPerSecond, burst, now);
   }

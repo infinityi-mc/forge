@@ -51,16 +51,13 @@ export class TokenBucket {
   }
 
   /**
-   * Commit a wait that was previously scheduled — debits one token
-   * once `waitMs` has elapsed and the caller is being admitted. Keeps
-   * the bucket in sync after a queued admission.
+   * Try to debit one token after a previously scheduled wait. Kept as a
+   * lower-level helper for callers that pre-computed a wait; it still
+   * re-checks capacity so concurrent waiters cannot over-admit when they
+   * wake at the same time.
    */
-  commitWait(now: number): void {
-    this.refill(now);
-    // The caller waited until at least one token was due; subtract it.
-    // Clamp at `-burst` to avoid an unbounded negative drift if the
-    // clock jumps backwards in a test.
-    this.tokens = Math.max(-this.burst, this.tokens - 1);
+  commitWait(now: number): TokenBucketState {
+    return this.acquire(now);
   }
 
   /** Approximate number of currently available tokens (floored). */

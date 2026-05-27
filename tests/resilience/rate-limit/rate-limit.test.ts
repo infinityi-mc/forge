@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  RateLimitedError,
-  combine,
-  rateLimit,
-} from "../../../src/resilience";
+import { RateLimitedError, combine, rateLimit } from "../../../src/resilience";
 import { TestClock, executionContext } from "../../../src/resilience/testing";
 
 describe("rateLimit (token-bucket)", () => {
@@ -117,6 +113,38 @@ describe("rateLimit (token-bucket)", () => {
     await clock.tickAsync(1_000);
     expect(await first).toBe(2);
   });
+
+  test("wait mode does not over-admit concurrent token-bucket waiters", async () => {
+    const clock = new TestClock();
+    const limiter = rateLimit({
+      algorithm: { kind: "token-bucket", tokensPerSecond: 1, burst: 1 },
+      mode: "wait",
+      clock,
+    });
+
+    await limiter.execute(() => "first", executionContext());
+
+    const completed: string[] = [];
+    const second = limiter
+      .execute(() => "second", executionContext())
+      .then((value) => completed.push(value));
+    const third = limiter
+      .execute(() => "third", executionContext())
+      .then((value) => completed.push(value));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(limiter.pending).toBe(2);
+
+    await clock.tickAsync(1_000);
+    expect(completed).toHaveLength(1);
+    expect(limiter.pending).toBe(1);
+
+    await clock.tickAsync(1_000);
+    await Promise.all([second, third]);
+    expect(completed).toHaveLength(2);
+    expect(limiter.pending).toBe(0);
+  });
 });
 
 describe("rateLimit (sliding-window)", () => {
@@ -139,6 +167,38 @@ describe("rateLimit (sliding-window)", () => {
     // After the window slides, slots free up.
     await clock.tickAsync(101);
     expect(await limiter.execute(() => 4, executionContext())).toBe(4);
+  });
+
+  test("wait mode does not over-admit concurrent sliding-window waiters", async () => {
+    const clock = new TestClock();
+    const limiter = rateLimit({
+      algorithm: { kind: "sliding-window", limit: 1, windowMs: 100 },
+      mode: "wait",
+      clock,
+    });
+
+    await limiter.execute(() => "first", executionContext());
+
+    const completed: string[] = [];
+    const second = limiter
+      .execute(() => "second", executionContext())
+      .then((value) => completed.push(value));
+    const third = limiter
+      .execute(() => "third", executionContext())
+      .then((value) => completed.push(value));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(limiter.pending).toBe(2);
+
+    await clock.tickAsync(100);
+    expect(completed).toHaveLength(1);
+    expect(limiter.pending).toBe(1);
+
+    await clock.tickAsync(100);
+    await Promise.all([second, third]);
+    expect(completed).toHaveLength(2);
+    expect(limiter.pending).toBe(0);
   });
 });
 

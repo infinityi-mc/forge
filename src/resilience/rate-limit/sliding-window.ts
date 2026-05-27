@@ -45,12 +45,12 @@ export class SlidingWindowLimiter {
   }
 
   /**
-   * Record a slot used after waiting — like `acquire` but assumes the
-   * caller has already paid for the wait.
+   * Try to record a slot used after waiting. Kept as a lower-level helper
+   * for callers that pre-computed a wait; it still re-checks capacity so
+   * concurrent waiters cannot over-admit when they wake at the same time.
    */
-  commitWait(now: number): void {
-    this.evict(now);
-    this.timestamps.push(now);
+  commitWait(now: number): SlidingWindowState {
+    return this.acquire(now);
   }
 
   /** Approximate number of admissions currently free. */
