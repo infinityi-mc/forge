@@ -129,9 +129,11 @@ export function tracedFetch(options: TracedFetchOptions): FetchLike {
               code: "error",
               message: `HTTP ${res.status}`,
             });
-          } else {
-            span.setStatus({ code: "ok" });
           }
+          // Non-5xx: leave status as `unset` per OTel HTTP semantic
+          // conventions. Setting `ok` would prevent downstream
+          // instrumentation from correcting the status (since `ok`
+          // cannot be downgraded to `error`).
           return res;
         } catch (err) {
           // Record `error.type` before `withSpan`'s outer catch

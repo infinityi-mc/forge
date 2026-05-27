@@ -55,7 +55,7 @@ describe("tracedFetch", () => {
     expect(span.attributes["server.address"]).toBe("api.example.com");
     expect(span.attributes["server.port"]).toBe(8443);
     expect(span.attributes["url.scheme"]).toBe("https");
-    expect(span.status.code).toBe("ok");
+    expect(span.status.code).toBe("unset");
   });
 
   test("injects W3C traceparent when a context is active", async () => {
@@ -267,14 +267,18 @@ describe("tracedFetch", () => {
     expect(span.attributes["http.response.status_code"]).toBe(503);
   });
 
-  test("does NOT mark 4xx responses as error status", async () => {
+  test("leaves 4xx response status as unset (OTel HTTP semantic convention)", async () => {
     const { tracer, spans } = setup();
     const fetch_ = tracedFetch({
       tracer,
       fetch: async () => new Response(null, { status: 404 }),
     });
     await fetch_("https://api.example.com/x");
-    expect(spans[0]!.status.code).toBe("ok");
+    // Per OTel, non-5xx responses leave span status `unset` — NOT
+    // `ok` — so downstream instrumentation can still set `error` if
+    // needed (the ok→error downgrade protection in the tracer would
+    // prevent that).
+    expect(spans[0]!.status.code).toBe("unset");
   });
 
   test("network failure records error.type and rethrows", async () => {
