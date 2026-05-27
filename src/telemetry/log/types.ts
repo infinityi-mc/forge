@@ -122,6 +122,15 @@ export interface Logger {
    */
   flush?(options?: LogFlushOptions): Promise<void>;
   /**
+   * Release the underlying exporter's resources (network connections,
+   * file handles, …). Delegates to the wrapped exporter's `shutdown()`
+   * so consumer-supplied middleware that overrides `shutdown` is
+   * honored. Resolves immediately when the exporter has no
+   * `shutdown` method. Optional so consumer-built loggers stay
+   * backwards-compatible.
+   */
+  shutdown?(): Promise<void>;
+  /**
    * Create a child logger with additional base attributes. The child
    * inherits the parent's level, exporter, and middleware stack.
    */

@@ -19,9 +19,11 @@ Most observability libraries (including the official `@opentelemetry/*` JS SDK) 
 4. `forge/telemetry/trace` — `Tracer` + `Span` with W3C context bridge, samplers (`alwaysOn`, `alwaysOff`, `parentBased`, `ratio`), `simpleSpanProcessor` + `batchSpanProcessor`, recording / null / stdout exporters.
 5. `forge/telemetry/exporters/otlp-http` — zero-dependency OTLP/HTTP **JSON** exporters for logs, metrics, traces, sharing a retry-aware transport.
 6. `forge/telemetry/exporters/prometheus` — pull-based text-exposition exporter for the meter (`/metrics` endpoint).
-7. `forge/telemetry/*/testing` — recording exporter per signal + conformance scenarios for verifying BYO exporters.
+7. `forge/telemetry/instrumentation/fetch` — opt-in `tracedFetch` wrapper that creates a client span per request and injects W3C headers.
+8. `forge/telemetry/initTelemetry` — top-level factory that wires log + meter + trace around a single `Resource` with a unified `flush()` / `shutdown()`.
+9. `forge/telemetry/testing` + `forge/telemetry/*/testing` — `createTestTelemetry()` aggregate plus recording exporters and conformance scenarios for verifying BYO exporters.
 
-Upcoming: opt-in instrumentation wrappers (`tracedFetch`, `tracedSqlite`, `tracedPg`), `initTelemetry()`, OTLP/HTTP **protobuf** body encoder.
+Upcoming: more instrumentation wrappers (`tracedSqlite`, `tracedPg`), OTLP/HTTP **protobuf** body encoder, OTLP/gRPC.
 
 ---
 
@@ -55,16 +57,22 @@ src/telemetry/
 │   ├── exporters/{stdout,null,recording}/
 │   └── testing/                      # recordingSpanExporter
 │
-└── exporters/                        # cross-signal wire exporters
-    ├── otlp-http/                    # OTLP/HTTP JSON (logs + metrics + traces)
-    │   ├── transport.ts              # shared retry-aware HTTP client
-    │   ├── encoding.ts               # KeyValue / AnyValue / Resource encoders
-    │   ├── log.ts | meter.ts | trace.ts
-    │   └── index.ts
-    └── prometheus/                   # text exposition (meter)
-        ├── format.ts                 # MetricBatch → exposition text
-        ├── exporter.ts               # pull-based exporter with .render()
-        └── index.ts
+├── exporters/                        # cross-signal wire exporters
+│   ├── otlp-http/                    # OTLP/HTTP JSON (logs + metrics + traces)
+│   │   ├── transport.ts              # shared retry-aware HTTP client
+│   │   ├── encoding.ts               # KeyValue / AnyValue / Resource encoders
+│   │   ├── log.ts | meter.ts | trace.ts
+│   │   └── index.ts
+│   └── prometheus/                   # text exposition (meter)
+│       ├── format.ts                 # MetricBatch → exposition text
+│       ├── exporter.ts               # pull-based exporter with .render()
+│       └── index.ts
+│
+├── instrumentation/                  # opt-in wrappers around external libs
+│   └── fetch/                        # tracedFetch
+│
+├── init.ts                           # initTelemetry — top-level factory
+└── testing/                          # createTestTelemetry — end-to-end harness
 ```
 
 ---
@@ -430,7 +438,79 @@ Up-down counters are emitted as Prometheus `gauge` (no monotonic constraint). Hi
 
 ---
 
+## Top-level factory — `initTelemetry`
+
+`initTelemetry()` wires every signal around a single `Resource` and exposes a unified `flush()` / `shutdown()` that fan out across log + meter + trace without throwing — errors are returned per signal so the host process can decide how to recover.
+
+```ts
+import { initTelemetry } from "forge/telemetry";
+import { stdoutExporter as stdoutLogExporter } from "forge/telemetry/log/exporters/stdout";
+import { stdoutMeterExporter } from "forge/telemetry/meter/exporters/stdout";
+import { stdoutSpanExporter } from "forge/telemetry/trace/exporters/stdout";
+
+const t = initTelemetry({
+  resource: { serviceName: "api", environment: "production" },
+  log: { exporter: stdoutLogExporter(), level: "debug" },
+  meter: { exporter: stdoutMeterExporter(), intervalMs: 10_000 },
+  trace: { exporter: stdoutSpanExporter(), processor: "batch" },
+});
+
+t.log!.info("ready");
+t.meter!.createCounter("http.requests").add(1);
+await t.tracer!.withSpan("checkout", async () => { /* … */ });
+
+process.on("SIGTERM", async () => {
+  const result = await t.shutdown();
+  if (result.trace?.ok === false) console.error(result.trace.error);
+  process.exit(0);
+});
+```
+
+Every section is independently optional — omit `log` / `meter` / `trace` and the corresponding member is `undefined`. The trace `processor` argument accepts `"simple"`, `"batch"` (default), `{ kind: "batch", maxQueueSize, … }`, or a fully-formed `SpanProcessor`.
+
+---
+
+## Instrumentation — `tracedFetch`
+
+Opt-in wrapper around `fetch` that creates a client span per request and injects W3C `traceparent` / `tracestate` / `baggage` headers from the active context. No monkey-patching — consumers replace their `fetch` reference explicitly.
+
+```ts
+import { tracedFetch } from "forge/telemetry/instrumentation/fetch";
+
+const fetch = tracedFetch({ tracer });
+
+const res = await fetch("https://api.example.com/users", { method: "POST" });
+// → span: "HTTP POST", kind=client, http.* + url.* + server.* attributes,
+//   status=ok when 2xx/3xx/4xx, status=error when 5xx or thrown
+```
+
+Disable header injection per call site with `disablePropagation: true` (useful for cross-origin vendors that reject unknown headers). Override the span name with `spanName(input, init)` and add custom attributes with `attributes(input, init)`.
+
+---
+
+## End-to-end testing — `createTestTelemetry`
+
+For consumers who want to assert across log + meter + trace at once, `createTestTelemetry()` wires `initTelemetry` with recording exporters for all three signals and exposes convenience getters.
+
+```ts
+import { createTestTelemetry } from "forge/telemetry/testing";
+
+const t = createTestTelemetry();
+
+await runHandlerUnderTest(t);
+
+await t.flushAll();
+
+expect(t.records).toHaveLength(2);
+expect(t.batches[0]!.metrics[0]!.descriptor.name).toBe("http.requests");
+expect(t.spans.map((s) => s.name)).toEqual(["checkout", "charge"]);
+```
+
+The trace processor defaults to `"simple"` so spans appear in `t.spans` synchronously on `span.end()`. The meter's background timer is disabled (`intervalMs: 0`) so collection is deterministic via `t.flushAll()`.
+
+---
+
 ## Roadmap
 
-- **Next PR:** opt-in instrumentation wrappers (`tracedFetch`, `tracedSqlite`, `tracedPg`), `initTelemetry()`, end-to-end `TestTelemetry` for asserting across all three signals at once.
+- **Next:** more instrumentation wrappers (`tracedSqlite`, `tracedPg`), middleware-shaped HTTP server wiring.
 - **Later:** OTLP/HTTP protobuf body encoder, OTLP/gRPC transport, Datadog-shaped JSON exporter.

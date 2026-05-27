@@ -119,6 +119,7 @@ function createLoggerInstance(
     error: (message, attributes) => emit("error", message, attributes),
     fatal: (message, attributes) => emit("fatal", message, attributes),
     flush: (options) => exporter.flush?.(options) ?? Promise.resolve(),
+    shutdown: () => exporter.shutdown?.() ?? Promise.resolve(),
     child: (childAttributes) =>
       createLoggerInstance(
         level,
