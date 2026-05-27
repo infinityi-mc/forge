@@ -1,0 +1,48 @@
+{
+  "name": "@infinityi/forge",
+  "version": "0.0.1",
+  "description": "The boring infrastructure layer your business logic deserves. An opinionated, composable, Bun-first toolkit for distributed systems: telemetry, resilience, config, data, messaging, http, security, and lifecycle.",
+  "module": "index.ts",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/your-org/forge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/forge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/forge/issues"
+  },
+  "keywords": [
+    "bun",
+    "typescript",
+    "backend",
+    "infrastructure",
+    "telemetry",
+    "observability",
+    "resilience",
+    "circuit-breaker",
+    "retry",
+    "rate-limit",
+    "config",
+    "outbox",
+    "messaging",
+    "http",
+    "jwt",
+    "graceful-shutdown"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
