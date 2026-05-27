@@ -115,6 +115,44 @@ describe("initTelemetry", () => {
     const result = await t.shutdown();
     expect(result.meter).toEqual({ ok: false, error: expect.any(Error) });
   });
+
+  test("shutdown() invokes the log exporter's shutdown (not just flush)", async () => {
+    // Regression: pre-fix the log signal path only called
+    // `logger.flush()`, so LogExporter.shutdown() — used by the OTLP
+    // exporter to release its HTTP transport — was never invoked.
+    let flushCalls = 0;
+    let shutdownCalls = 0;
+    const logExp = recordingExporter({
+      onFlush: () => {
+        flushCalls++;
+      },
+      onShutdown: () => {
+        shutdownCalls++;
+      },
+    });
+    const t = initTelemetry({
+      resource,
+      log: { exporter: logExp },
+    });
+    const result = await t.shutdown();
+    expect(result.log).toEqual({ ok: true });
+    expect(flushCalls).toBe(1);
+    expect(shutdownCalls).toBe(1);
+  });
+
+  test("shutdown() reports failure when log shutdown throws", async () => {
+    const logExp = recordingExporter({
+      onShutdown: () => {
+        throw new Error("log shutdown boom");
+      },
+    });
+    const t = initTelemetry({
+      resource,
+      log: { exporter: logExp },
+    });
+    const result = await t.shutdown();
+    expect(result.log).toEqual({ ok: false, error: expect.any(Error) });
+  });
 });
 
 describe("createTestTelemetry", () => {

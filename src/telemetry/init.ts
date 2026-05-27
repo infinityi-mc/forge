@@ -175,7 +175,17 @@ export function initTelemetry(options: InitTelemetryOptions): Telemetry {
 
   async function shutdown(): Promise<TelemetryFlushResult> {
     const out: { -readonly [K in keyof TelemetryFlushResult]: TelemetryFlushResult[K] } = {};
-    if (logger?.flush) out.log = await runSafe(() => logger.flush!());
+    if (logger) {
+      // Flush first so any queued records are sent before the
+      // exporter releases its transport. `logger.shutdown` delegates
+      // to the wrapped exporter's `shutdown` so resources (HTTP
+      // connections in the OTLP exporter, file handles, …) are
+      // properly released.
+      out.log = await runSafe(async () => {
+        if (logger.flush) await logger.flush();
+        if (logger.shutdown) await logger.shutdown();
+      });
+    }
     if (meter) out.meter = await runSafe(() => meter.shutdown());
     if (traceProcessor) out.trace = await runSafe(() => traceProcessor!.shutdown());
     return out;

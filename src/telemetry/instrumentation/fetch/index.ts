@@ -32,7 +32,7 @@
 import type { TelemetryContext } from "../../context/types";
 import { currentContext } from "../../context/storage";
 import { formatBaggage, formatTraceparent } from "../../context/propagation";
-import type { Span, SpanAttributes, Tracer } from "../../trace/types";
+import type { SpanAttributes, Tracer } from "../../trace/types";
 
 /**
  * Minimal fetch-shape we wrap. We use a stripped-down signature
@@ -89,7 +89,7 @@ export function tracedFetch(options: TracedFetchOptions): FetchLike {
   const buildExtra = options.attributes;
   const propagate = options.disablePropagation !== true;
 
-  return async (input, init) => {
+  return (input, init) => {
     const method = requestMethod(input, init);
     const url = requestUrl(input);
     const attrs: SpanAttributes = {
@@ -109,33 +109,42 @@ export function tracedFetch(options: TracedFetchOptions): FetchLike {
       for (const k of Object.keys(extra)) attrs[k] = extra[k];
     }
 
-    const span = tracer.startSpan(buildName(input, init as RequestInit | undefined), {
-      kind: "client",
-      attributes: attrs,
-    });
-
-    const nextInit = propagate
-      ? injectHeaders(init, currentContext())
-      : (init as Parameters<typeof fetch>[1]);
-
-    try {
-      const res = await inner(input, nextInit);
-      span.setAttribute("http.response.status_code", res.status);
-      if (res.status >= 500) {
-        span.setStatus({
-          code: "error",
-          message: `HTTP ${res.status}`,
-        });
-      } else {
-        span.setStatus({ code: "ok" });
-      }
-      span.end();
-      return res;
-    } catch (err) {
-      recordError(span, err);
-      span.end();
-      throw err;
-    }
+    // Use `withSpan` so the new span becomes the *active* context for
+    // the duration of the request. This is what makes the injected
+    // `traceparent` header carry the new client span's id (so the
+    // downstream service's spans become children of the client span,
+    // not siblings of the caller's span).
+    return tracer.withSpan(
+      buildName(input, init as RequestInit | undefined),
+      async (span): Promise<Response> => {
+        span.setAttributes(attrs);
+        const nextInit = propagate
+          ? injectHeaders(init, currentContext())
+          : (init as Parameters<typeof fetch>[1]);
+        try {
+          const res = await inner(input, nextInit);
+          span.setAttribute("http.response.status_code", res.status);
+          if (res.status >= 500) {
+            span.setStatus({
+              code: "error",
+              message: `HTTP ${res.status}`,
+            });
+          } else {
+            span.setStatus({ code: "ok" });
+          }
+          return res;
+        } catch (err) {
+          // Record `error.type` before `withSpan`'s outer catch
+          // observes the throw — `withSpan` will then set
+          // `status=error` with the thrown message and call `end()`.
+          const errorType =
+            err instanceof Error && err.name ? err.name : "fetch_error";
+          span.setAttribute("error.type", errorType);
+          throw err;
+        }
+      },
+      { kind: "client" },
+    );
   };
 }
 
@@ -183,12 +192,4 @@ function injectHeaders(
     headers.set("baggage", formatBaggage(ctx.baggage));
   }
   return { ...(init ?? {}), headers };
-}
-
-function recordError(span: Span, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
-  const errorType =
-    err instanceof Error && err.name ? err.name : "fetch_error";
-  span.setAttribute("error.type", errorType);
-  span.setStatus({ code: "error", message });
 }
