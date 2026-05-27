@@ -189,8 +189,7 @@ describe("circuitBreaker", () => {
     const breaker = circuitBreaker({
       failureThreshold: 2,
       resetTimeoutMs: 1_000,
-      shouldTrip: (err) =>
-        err instanceof Error && err.message !== "user-error",
+      shouldTrip: (err) => err instanceof Error && err.message !== "user-error",
     });
 
     // Two user errors — should NOT trip.
@@ -325,9 +324,32 @@ describe("circuitBreaker", () => {
     // Only after a full resetTimeoutMs from the manual forceOpen call
     // should the breaker allow a half-open probe.
     await clock.tickAsync(25_000);
-    const recovered = await breaker.execute(() => "recovered", executionContext());
+    const recovered = await breaker.execute(
+      () => "recovered",
+      executionContext(),
+    );
     expect(recovered).toBe("recovered");
     expect(breaker.state).toBe("closed");
   });
 
+  test("validates resetTimeoutMs is positive", () => {
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: 0,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: -1,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: Number.NaN,
+      }),
+    ).toThrow(RangeError);
+  });
 });

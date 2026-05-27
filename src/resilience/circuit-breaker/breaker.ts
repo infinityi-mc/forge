@@ -67,9 +67,9 @@ export function circuitBreaker(
       `circuitBreaker: failureThreshold must be > 0, got ${options.failureThreshold}`,
     );
   }
-  if (!Number.isFinite(options.resetTimeoutMs) || options.resetTimeoutMs < 0) {
+  if (!Number.isFinite(options.resetTimeoutMs) || options.resetTimeoutMs <= 0) {
     throw new RangeError(
-      `circuitBreaker: resetTimeoutMs must be a non-negative finite number, got ${options.resetTimeoutMs}`,
+      `circuitBreaker: resetTimeoutMs must be a positive finite number, got ${options.resetTimeoutMs}`,
     );
   }
 
