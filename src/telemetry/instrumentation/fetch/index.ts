@@ -83,7 +83,8 @@ export interface TracedFetchOptions {
  */
 export function tracedFetch(options: TracedFetchOptions): FetchLike {
   const tracer = options.tracer;
-  const inner: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+  const inner: FetchLike =
+    options.fetch ?? ((input, init) => fetch(input, init));
   const buildName =
     options.spanName ?? ((input, init) => `HTTP ${requestMethod(input, init)}`);
   const buildExtra = options.attributes;
@@ -104,7 +105,9 @@ export function tracedFetch(options: TracedFetchOptions): FetchLike {
         attrs["url.scheme"] = parsed.protocol.replace(/:$/, "");
       }
     }
-    const extra = buildExtra ? buildExtra(input, init as RequestInit | undefined) : undefined;
+    const extra = buildExtra
+      ? buildExtra(input, init as RequestInit | undefined)
+      : undefined;
     if (extra) {
       for (const k of Object.keys(extra)) attrs[k] = extra[k];
     }
@@ -194,7 +197,7 @@ function injectHeaders(
   //     Content-Type, etc. survive when caller passes a Request and
   //     no init)
   //   - otherwise empty
-  let base: HeadersInit | undefined;
+  let base: ConstructorParameters<typeof Headers>[0] | undefined;
   if (init?.headers !== undefined) {
     base = init.headers;
   } else if (isRequest(input)) {
