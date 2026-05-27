@@ -2,8 +2,8 @@
 
 **The boring infrastructure layer your business logic deserves.**
 
-[![Bun Version](https://img.shields.io/badge/bun-1.1%2B-orange.svg)](https://bun.sh)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5%2B-blue.svg)](https://www.typescriptlang.org/)
+[![Bun Version](https://img.shields.io/badge/bun-1.3%2B-orange.svg)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -49,11 +49,12 @@ Forge is modular. Import only what you need; tree-shaking ensures zero bloat.
 
 ## 🧠 Design Principles
 
-1.  **Composable, Not Monolithic:** Use `forge/resilience` without `forge/data`. There are no forced peer dependencies.
-2.  **Interfaces First:** Every module exposes an interface (`Logger`, `Cache`, `MessageBus`) with real and in-memory implementations. Testability is a first-class feature.
-3.  **Observable by Default:** Every operation emits metrics and traces unless explicitly silenced. You cannot fix what you cannot see.
-4.  **Fail-Fast at Boot:** Misconfigurations and missing secrets crash the app in milliseconds during startup, not 3 hours later in production.
-5.  **Zero Magic:** No hidden control flow, no global state, no decorator-based dependency injection containers. Explicit wiring only.
+1.  **Bun First:** Leverage Bun's native APIs instead of reinventing them. Use `Bun.serve()` for HTTP servers, Bun's built-in `fetch` for HTTP requests, `bun:sqlite` for lightweight persistence, and `bun:test` for testing. If Bun already provides a capability—don't wrap it, don't polyfill it, don't replace it with a third-party library. Forge extends Bun; it doesn't abstract it away.
+2.  **Composable, Not Monolithic:** Use `forge/resilience` without `forge/data`. There are no forced peer dependencies.
+3.  **Interfaces First:** Every module exposes an interface (`Logger`, `Cache`, `MessageBus`) with real and in-memory implementations. Testability is a first-class feature.
+4.  **Observable by Default:** Every operation emits metrics and traces unless explicitly silenced. You cannot fix what you cannot see.
+5.  **Fail-Fast at Boot:** Misconfigurations and missing secrets crash the app in milliseconds during startup, not 3 hours later in production.
+6.  **Zero Magic:** No hidden control flow, no global state, no decorator-based dependency injection containers. Explicit wiring only.
 
 ---
 
