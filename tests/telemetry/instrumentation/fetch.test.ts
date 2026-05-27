@@ -153,6 +153,82 @@ describe("tracedFetch", () => {
     expect(tp).toContain(spans[0]!.spanId);
   });
 
+  test("preserves Request headers when init is omitted (Authorization not dropped)", async () => {
+    // Regression: per the Fetch spec, fetch(request, init) replaces
+    // the request's headers entirely when init.headers is provided.
+    // The wrapper must seed the new Headers from the Request's own
+    // headers when init has none — otherwise Authorization,
+    // Content-Type, etc. are silently dropped.
+    const { tracer } = setup();
+    let captured: Headers | undefined;
+    const fetch_ = tracedFetch({
+      tracer,
+      fetch: async (_input, init) => {
+        captured = new Headers(init?.headers);
+        return new Response(null, { status: 200 });
+      },
+    });
+    const req = new Request("https://api.example.com/x", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ a: 1 }),
+    });
+    await withContext(
+      {
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: 1,
+        baggage: {},
+      },
+      async () => {
+        await fetch_(req);
+      },
+    );
+    expect(captured!.get("authorization")).toBe("Bearer token");
+    expect(captured!.get("content-type")).toBe("application/json");
+    // Propagation header still added.
+    expect(captured!.has("traceparent")).toBe(true);
+  });
+
+  test("explicit init.headers replaces Request headers (matches Fetch spec)", async () => {
+    // When the caller passes init.headers, those headers replace the
+    // Request's own — we honor that and only merge propagation headers
+    // on top of init.headers.
+    const { tracer } = setup();
+    let captured: Headers | undefined;
+    const fetch_ = tracedFetch({
+      tracer,
+      fetch: async (_input, init) => {
+        captured = new Headers(init?.headers);
+        return new Response(null, { status: 200 });
+      },
+    });
+    const req = new Request("https://api.example.com/x", {
+      headers: { Authorization: "Bearer original", "X-From-Request": "1" },
+    });
+    await withContext(
+      {
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: 1,
+        baggage: {},
+      },
+      async () => {
+        await fetch_(req, {
+          headers: { Authorization: "Bearer override" },
+        });
+      },
+    );
+    // init.headers wins (Fetch spec replacement semantics).
+    expect(captured!.get("authorization")).toBe("Bearer override");
+    // Request-only header is NOT carried over — matches the spec.
+    expect(captured!.has("x-from-request")).toBe(false);
+    expect(captured!.has("traceparent")).toBe(true);
+  });
+
   test("disablePropagation skips header injection", async () => {
     const { tracer } = setup();
     let captured: Headers | undefined;

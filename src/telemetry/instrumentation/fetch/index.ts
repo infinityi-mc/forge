@@ -119,7 +119,7 @@ export function tracedFetch(options: TracedFetchOptions): FetchLike {
       async (span): Promise<Response> => {
         span.setAttributes(attrs);
         const nextInit = propagate
-          ? injectHeaders(init, currentContext())
+          ? injectHeaders(input, init, currentContext())
           : (init as Parameters<typeof fetch>[1]);
         try {
           const res = await inner(input, nextInit);
@@ -179,11 +179,26 @@ function safeUrl(value: string): URL | undefined {
 }
 
 function injectHeaders(
+  input: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1],
   ctx: TelemetryContext | undefined,
 ): Parameters<typeof fetch>[1] {
   if (!ctx) return init;
-  const headers = new Headers(init?.headers ?? undefined);
+  // Per the Fetch spec, when `fetch(request, init)` is called with
+  // `init.headers` present, those headers completely replace the
+  // request's own. So we must seed `headers` with the right base:
+  //   - explicit init.headers when caller provided them
+  //   - otherwise the Request's own headers (so Authorization,
+  //     Content-Type, etc. survive when caller passes a Request and
+  //     no init)
+  //   - otherwise empty
+  let base: HeadersInit | undefined;
+  if (init?.headers !== undefined) {
+    base = init.headers;
+  } else if (isRequest(input)) {
+    base = input.headers;
+  }
+  const headers = new Headers(base ?? undefined);
   headers.set("traceparent", formatTraceparent(ctx));
   if (ctx.traceState && ctx.traceState.length > 0) {
     headers.set("tracestate", ctx.traceState);
@@ -192,4 +207,13 @@ function injectHeaders(
     headers.set("baggage", formatBaggage(ctx.baggage));
   }
   return { ...(init ?? {}), headers };
+}
+
+function isRequest(input: Parameters<typeof fetch>[0]): input is Request {
+  return (
+    typeof Request !== "undefined" &&
+    typeof input === "object" &&
+    input !== null &&
+    input instanceof Request
+  );
 }
