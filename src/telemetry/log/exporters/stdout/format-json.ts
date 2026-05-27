@@ -82,17 +82,26 @@ function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
-    // Fallback to per-key resilient serialization. This is rare — only
-    // hits when an attribute contains a value with a throwing `toJSON`.
-    return JSON.stringify(
-      value,
-      (_key, val) => {
-        try {
-          return val;
-        } catch {
-          return "[unserializable]";
+    // Handle the three common reasons the fast path fails: BigInt
+    // values, circular references, and the rest (e.g. a throwing
+    // `toJSON`). We coerce BigInt to string and break cycles, then
+    // fall through to a placeholder if that still fails — because
+    // returning *something* is more important than the exact shape.
+    try {
+      const seen = new WeakSet<object>();
+      return JSON.stringify(value, (_key, val) => {
+        if (typeof val === "bigint") return val.toString();
+        if (typeof val === "object" && val !== null) {
+          if (seen.has(val)) return "[circular]";
+          seen.add(val);
         }
-      },
-    );
+        return val;
+      });
+    } catch {
+      // Last-resort placeholder. Hit when an attribute has a throwing
+      // `toJSON` — `toJSON` runs before the replacer per spec, so we
+      // can't intercept it.
+      return '{"_serialization_error":true}';
+    }
   }
 }

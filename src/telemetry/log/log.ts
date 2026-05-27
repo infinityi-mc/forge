@@ -16,7 +16,7 @@
 
 import { currentContext } from "../context/storage";
 import { LogExporterError } from "./errors";
-import { isErrorHandled } from "./middleware/hooks";
+import { forwardHooks, isErrorHandled } from "./middleware/hooks";
 import { serializeError } from "./serialize";
 import type {
   CreateLog,
@@ -44,8 +44,12 @@ function shouldLog(entryLevel: LogLevel, minLevel: LogLevel): boolean {
 
 /**
  * Compose middleware around an exporter, outermost-first. `[a, b, c]`
- * produces `a(b(c(exporter)))`. We preserve `flush`/`shutdown` from the
- * underlying exporter when middleware doesn't override them.
+ * produces `a(b(c(exporter)))`. We preserve `flush`/`shutdown` and the
+ * internal drop/error hooks from the underlying exporter when the
+ * middleware doesn't override them — this is what lets a `telemetry()`
+ * middleware deep in the chain still observe `sample()` drops even
+ * when a non-hook-aware middleware (`rateLimit`, `redact`, …) sits
+ * between them.
  */
 function applyMiddleware(
   exporter: LogExporter,
@@ -64,6 +68,7 @@ function applyMiddleware(
     if (!wrapped.shutdown && inner.shutdown) {
       wrapped.shutdown = inner.shutdown.bind(inner);
     }
+    forwardHooks(wrapped, inner);
   }
   return wrapped;
 }

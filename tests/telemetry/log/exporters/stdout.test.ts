@@ -88,6 +88,46 @@ describe("formatJson", () => {
     );
     expect(JSON.parse(line).time).toBe(123);
   });
+
+  test("safeStringify breaks cycles in attribute values", () => {
+    const obj: Record<string, unknown> = { name: "root" };
+    obj["self"] = obj;
+    const line = formatJson({
+      level: "info",
+      message: "x",
+      timestamp: new Date(0),
+      attributes: { cyc: obj },
+    });
+    expect(line).toContain("[circular]");
+    expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  test("safeStringify coerces BigInt values to strings", () => {
+    const line = formatJson({
+      level: "info",
+      message: "x",
+      timestamp: new Date(0),
+      attributes: { big: 9007199254740993n },
+    });
+    const parsed = JSON.parse(line);
+    expect(parsed.big).toBe("9007199254740993");
+  });
+
+  test("safeStringify returns a placeholder when an attribute's toJSON throws", () => {
+    const evil = {
+      toJSON() {
+        throw new Error("nope");
+      },
+    };
+    const line = formatJson({
+      level: "info",
+      message: "x",
+      timestamp: new Date(0),
+      attributes: { evil },
+    });
+    expect(line).toContain("_serialization_error");
+    expect(() => JSON.parse(line)).not.toThrow();
+  });
 });
 
 describe("formatPretty", () => {

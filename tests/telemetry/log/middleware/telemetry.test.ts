@@ -92,4 +92,35 @@ describe("telemetry middleware", () => {
     expect(drops).toHaveLength(1);
     expect(drops[0]!.metadata).toHaveProperty("retryAfterMs");
   });
+
+  test("hooks propagate through intermediate middleware (README order: [sample, rateLimit, telemetry])", () => {
+    const drops: { reason: string }[] = [];
+    let nowMs = 0;
+    const exp = recordingExporter();
+    const log = createLog({
+      exporter: exp,
+      level: "trace",
+      middleware: [
+        // sample drops everything — its next is the rateLimit wrapper,
+        // which does NOT define LOG_DROP_HOOK locally. The fix in
+        // applyMiddleware/forwardHooks must surface the telemetry hook
+        // through the rateLimit wrapper for this notice to land.
+        sample({ rate: 0 }),
+        rateLimit({
+          recordsPerInterval: 1000,
+          intervalMs: 1_000,
+          burst: 1000,
+          now: () => nowMs,
+        }),
+        telemetry({ onDrop: (notice) => drops.push(notice) }),
+      ],
+    });
+
+    log.info("a");
+    log.info("b");
+    log.info("c");
+
+    expect(drops).toHaveLength(3);
+    expect(drops.every((d) => d.reason === "sample")).toBe(true);
+  });
 });

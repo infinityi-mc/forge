@@ -53,6 +53,26 @@ export function notifyError(next: LogExporter, notice: LogErrorNotice): void {
   (next as HookedExporter)[LOG_ERROR_HOOK]?.(notice);
 }
 
+/**
+ * Copy the drop/error hooks from `inner` onto `outer` when `outer`
+ * doesn't already define them. Called by `applyMiddleware` so that a
+ * `notifyDrop(next, …)` from one middleware reaches a `telemetry`
+ * middleware deeper in the chain — even when there are non-hook-aware
+ * middleware (like `rateLimit` or `redact`) sitting between them.
+ *
+ * Without this, `[sample, rateLimit, telemetry]` would silently lose
+ * `sample` drop notifications because `sample.next` is the `rateLimit`
+ * wrapper, which doesn't carry the hooks.
+ */
+export function forwardHooks(outer: LogExporter, inner: LogExporter): void {
+  const o = outer as HookedExporter;
+  const i = inner as HookedExporter;
+  const drop = i[LOG_DROP_HOOK];
+  const err = i[LOG_ERROR_HOOK];
+  if (drop && !o[LOG_DROP_HOOK]) o[LOG_DROP_HOOK] = drop.bind(i);
+  if (err && !o[LOG_ERROR_HOOK]) o[LOG_ERROR_HOOK] = err.bind(i);
+}
+
 export function markErrorHandled(error: unknown): void {
   if (
     (typeof error === "object" && error !== null) ||
