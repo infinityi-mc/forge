@@ -231,7 +231,6 @@ describe("circuitBreaker", () => {
     const err = await pipeline.execute(async () => 1).catch((e) => e);
     expect(err).toBeInstanceOf(CircuitOpenError);
   });
-});
 
   test("half-open non-trip-error clears window before closing (fixes premature re-tripping)", async () => {
     // Bug scenario: with failureThreshold: 3 and CountWindow(10):
@@ -294,3 +293,41 @@ describe("circuitBreaker", () => {
     }
     expect(breaker.state).toBe("open");
   });
+
+  test("forceOpen refreshes cooldown when breaker is already open", async () => {
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 30_000,
+      clock,
+    });
+
+    await breaker
+      .execute(() => {
+        throw new Error("trip");
+      }, executionContext())
+      .catch(() => {});
+    expect(breaker.state).toBe("open");
+
+    // Operator extends the incident-response open window near the end
+    // of the original cool-down.
+    await clock.tickAsync(25_000);
+    breaker.forceOpen();
+
+    // At the original retry time (T=30s), it must still be open.
+    await clock.tickAsync(5_000);
+    const stillOpen = await breaker
+      .execute(() => "probe-too-early", executionContext())
+      .catch((e) => e);
+    expect(stillOpen).toBeInstanceOf(CircuitOpenError);
+    expect(breaker.state).toBe("open");
+
+    // Only after a full resetTimeoutMs from the manual forceOpen call
+    // should the breaker allow a half-open probe.
+    await clock.tickAsync(25_000);
+    const recovered = await breaker.execute(() => "recovered", executionContext());
+    expect(recovered).toBe("recovered");
+    expect(breaker.state).toBe("closed");
+  });
+
+});

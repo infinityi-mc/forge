@@ -214,6 +214,16 @@ export function circuitBreaker(
 
   function forceOpen(): void {
     const now = clock.now();
+    if (state === "open") {
+      // Operator intent should extend the cool-down from the manual
+      // force-open time, not silently keep counting from the original
+      // trip. `transition("open")` would no-op because the state is
+      // unchanged, so refresh the timestamp explicitly.
+      openedAt = now;
+      halfOpenInFlight = 0;
+      reportState();
+      return;
+    }
     transition("open", now);
   }
 
