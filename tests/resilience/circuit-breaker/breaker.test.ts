@@ -232,3 +232,65 @@ describe("circuitBreaker", () => {
     expect(err).toBeInstanceOf(CircuitOpenError);
   });
 });
+
+  test("half-open non-trip-error clears window before closing (fixes premature re-tripping)", async () => {
+    // Bug scenario: with failureThreshold: 3 and CountWindow(10):
+    // 1. Three failures trip breaker → open with [F, F, F]
+    // 2. After resetTimeoutMs, probe in half-open throws non-trip error
+    // 3. Without window.clear(), [F, F, F] + success → [F, F, F, S]
+    // 4. Back in closed, ONE new failure → [F, F, F, S, F] with 4 failures
+    // 5. 4 >= 3 → breaker trips immediately
+    // Fix: ensure window.clear() happens before transition("closed") in
+    // the non-trip-error path.
+
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 3,
+      resetTimeoutMs: 50,
+      window: { kind: "count", size: 10 },
+      shouldTrip: (err) =>
+        err instanceof Error && err.message !== "non-trip-error",
+      clock,
+    });
+
+    // Step 1: Trip the breaker with three failures.
+    for (let i = 0; i < 3; i++) {
+      await breaker
+        .execute(() => {
+          throw new Error("trip");
+        }, executionContext())
+        .catch(() => {});
+    }
+    expect(breaker.state).toBe("open");
+
+    // Step 2: Transition to half-open and probe with a non-trip error.
+    await clock.tickAsync(50);
+    await breaker
+      .execute(() => {
+        throw new Error("non-trip-error");
+      }, executionContext())
+      .catch(() => {});
+    expect(breaker.state).toBe("closed");
+
+    // Step 3: Record ONE new failure.
+    await breaker
+      .execute(() => {
+        throw new Error("trip");
+      }, executionContext())
+      .catch(() => {});
+
+    // Step 4: Breaker should NOT trip from a single failure.
+    // If the window was not cleared, we'd have [F, F, F, S, F] and
+    // trip immediately. Since it was cleared, we have [F] and stay closed.
+    expect(breaker.state).toBe("closed");
+
+    // Two more failures should trip it.
+    for (let i = 0; i < 2; i++) {
+      await breaker
+        .execute(() => {
+          throw new Error("trip");
+        }, executionContext())
+        .catch(() => {});
+    }
+    expect(breaker.state).toBe("open");
+  });

@@ -20,11 +20,7 @@
 
 import { realClock } from "../clock";
 import { buildInstruments } from "../telemetry/instrumentation";
-import type {
-  Clock,
-  ExecutionContext,
-  Operation,
-} from "../types";
+import type { Clock, ExecutionContext, Operation } from "../types";
 import { CircuitOpenError } from "./errors";
 import {
   CountWindow,
@@ -71,10 +67,7 @@ export function circuitBreaker(
       `circuitBreaker: failureThreshold must be > 0, got ${options.failureThreshold}`,
     );
   }
-  if (
-    !Number.isFinite(options.resetTimeoutMs) ||
-    options.resetTimeoutMs < 0
-  ) {
+  if (!Number.isFinite(options.resetTimeoutMs) || options.resetTimeoutMs < 0) {
     throw new RangeError(
       `circuitBreaker: resetTimeoutMs must be a non-negative finite number, got ${options.resetTimeoutMs}`,
     );
@@ -82,8 +75,9 @@ export function circuitBreaker(
 
   const failureThreshold = options.failureThreshold;
   const isRatio = failureThreshold > 0 && failureThreshold < 1;
-  const minimumRequests = options.minimumRequests
-    ?? (isRatio ? Math.ceil(1 / failureThreshold) : failureThreshold);
+  const minimumRequests =
+    options.minimumRequests ??
+    (isRatio ? Math.ceil(1 / failureThreshold) : failureThreshold);
   const resetTimeoutMs = options.resetTimeoutMs;
   const halfOpenMaxAttempts = options.halfOpenMaxAttempts ?? 1;
   if (!Number.isInteger(halfOpenMaxAttempts) || halfOpenMaxAttempts < 1) {
@@ -163,10 +157,11 @@ export function circuitBreaker(
       if (retryAt !== undefined && now >= retryAt) {
         transition("half-open", now);
       } else {
-        throw new CircuitOpenError(
-          `circuit-breaker: breaker is open`,
-          { state, openedAt, retryAt },
-        );
+        throw new CircuitOpenError(`circuit-breaker: breaker is open`, {
+          state,
+          openedAt,
+          retryAt,
+        });
       }
     }
 
@@ -204,7 +199,7 @@ export function circuitBreaker(
         } else {
           // Treat as success — the dependency answered, just not with
           // an answer that should trip the breaker.
-          recordOutcome("success", after);
+          window.clear();
           transition("closed", after);
         }
       } else if (isFailure) {
