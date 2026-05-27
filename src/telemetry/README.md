@@ -11,15 +11,17 @@ Most observability libraries (including the official `@opentelemetry/*` JS SDK) 
 
 ---
 
-## Scope of this PR
-
-This PR delivers the foundation:
+## Shipped today
 
 1. `forge/telemetry/context` — trace ids, span ids, baggage, and W3C `traceparent` / `tracestate` / `baggage` propagation.
 2. `forge/telemetry/log` — structured, contextual JSON logging with built-in middleware (`redact`, `sample`, `rateLimit`, `correlation`, `serialize`, `telemetry`) and a stdout exporter that auto-detects JSON vs. pretty output.
-3. `forge/telemetry/log/testing` — recording exporter + conformance scenarios for verifying BYO exporters.
+3. `forge/telemetry/meter` — counter, up-down counter, gauge, histogram with automatic in-memory aggregation, periodic + on-demand collection, recording / null / stdout exporters.
+4. `forge/telemetry/trace` — `Tracer` + `Span` with W3C context bridge, samplers (`alwaysOn`, `alwaysOff`, `parentBased`, `ratio`), `simpleSpanProcessor` + `batchSpanProcessor`, recording / null / stdout exporters.
+5. `forge/telemetry/exporters/otlp-http` — zero-dependency OTLP/HTTP **JSON** exporters for logs, metrics, traces, sharing a retry-aware transport.
+6. `forge/telemetry/exporters/prometheus` — pull-based text-exposition exporter for the meter (`/metrics` endpoint).
+7. `forge/telemetry/*/testing` — recording exporter per signal + conformance scenarios for verifying BYO exporters.
 
-`forge/telemetry/meter`, `forge/telemetry/trace`, the OTLP exporters, and `initTelemetry()` land in subsequent PRs.
+Upcoming: opt-in instrumentation wrappers (`tracedFetch`, `tracedSqlite`, `tracedPg`), `initTelemetry()`, OTLP/HTTP **protobuf** body encoder.
 
 ---
 
@@ -29,34 +31,40 @@ This PR delivers the foundation:
 src/telemetry/
 ├── index.ts                          # cross-signal types (TelemetryError, Resource)
 ├── types.ts                          # Resource
-├── errors.ts                         # TelemetryError (signal-specific errors extend this)
+├── errors.ts                         # TelemetryError
 │
-├── context/
-│   ├── index.ts                      # public surface
-│   ├── ids.ts                        # genTraceId, genSpanId, validation
-│   ├── storage.ts                    # AsyncLocalStorage, withContext, withRootContext
-│   ├── propagation.ts                # W3C traceparent/tracestate/baggage
-│   └── types.ts                      # TelemetryContext, TRACE_FLAGS
+├── context/                          # W3C trace context + ALS-based propagation
+├── log/                              # structured JSON logging
 │
-└── log/
-    ├── index.ts                      # createLog, types
-    ├── log.ts                        # factory + level filtering + context auto-injection
-    ├── types.ts                      # LogRecord, LogExporter, LogMiddleware, Logger
-    ├── serialize.ts                  # serializeError helper
-    ├── errors.ts                     # LogError / LogExporterError / LogRateLimitError / …
-    ├── middleware/
-    │   ├── index.ts
-    │   ├── redact.ts                 # PII redaction (paths + regex)
-    │   ├── sample.ts                 # keep-rate, per-level overrides, deterministic or random
-    │   ├── rate-limit.ts             # token bucket
-    │   ├── correlation.ts            # pulls baggage + trace_id/span_id onto attributes
-    │   ├── serialize.ts              # eager Error → plain-object conversion
-    │   └── telemetry.ts              # onWrite / onDrop / onError observability
-    ├── exporters/
-    │   ├── stdout/                   # JSON or pretty, splits warn/error/fatal to stderr
-    │   ├── null/                     # discards everything
-    │   └── recording/                # in-memory buffer (testing)
-    └── testing/                      # conformance scenarios + assertion helpers
+├── meter/
+│   ├── index.ts                      # createMeter
+│   ├── meter.ts                      # factory + periodic collection
+│   ├── store.ts                      # in-memory series store + aggregation
+│   ├── types.ts                      # Meter / Instrument / MetricData / MeterExporter
+│   ├── errors.ts
+│   ├── exporters/{stdout,null,recording}/
+│   └── testing/                      # recordingMeterExporter
+│
+├── trace/
+│   ├── index.ts                      # createTracer + samplers + processors
+│   ├── tracer.ts                     # factory, span lifecycle, withSpan + context bridge
+│   ├── types.ts                      # Tracer / Span / SpanProcessor / SpanExporter / Sampler
+│   ├── errors.ts
+│   ├── samplers/{always-on,always-off,parent-based,ratio}.ts
+│   ├── processors/{simple,batch}.ts
+│   ├── exporters/{stdout,null,recording}/
+│   └── testing/                      # recordingSpanExporter
+│
+└── exporters/                        # cross-signal wire exporters
+    ├── otlp-http/                    # OTLP/HTTP JSON (logs + metrics + traces)
+    │   ├── transport.ts              # shared retry-aware HTTP client
+    │   ├── encoding.ts               # KeyValue / AnyValue / Resource encoders
+    │   ├── log.ts | meter.ts | trace.ts
+    │   └── index.ts
+    └── prometheus/                   # text exposition (meter)
+        ├── format.ts                 # MetricBatch → exposition text
+        ├── exporter.ts               # pull-based exporter with .render()
+        └── index.ts
 ```
 
 ---
@@ -253,7 +261,176 @@ for (const scenario of STANDARD_LOG_SCENARIOS) {
 
 ---
 
+## Meter (`forge/telemetry/meter`)
+
+```ts
+import { createMeter } from "forge/telemetry/meter";
+import { stdoutMeterExporter } from "forge/telemetry/meter/exporters/stdout";
+
+const meter = createMeter({
+  resource: { serviceName: "api" },
+  exporter: stdoutMeterExporter(),
+  intervalMs: 10_000, // export every 10s; 0 disables the timer
+});
+
+const requests = meter.createCounter("http.requests", { unit: "1" });
+requests.add(1, { method: "GET", path: "/health" });
+
+const inflight = meter.createUpDownCounter("http.inflight");
+inflight.add(1);
+// … later …
+inflight.add(-1);
+
+const memBytes = meter.createGauge("process.memory.heap", { unit: "By" });
+memBytes.record(process.memoryUsage().heapUsed);
+
+const latency = meter.createHistogram("http.duration", { unit: "ms" });
+latency.record(42, { method: "POST", path: "/orders" });
+
+// At shutdown:
+await meter.shutdown();
+```
+
+| Instrument | Method | When to use |
+| :--- | :--- | :--- |
+| `Counter` | `.add(delta, attrs?)` (monotonic; negatives rejected) | request counts, bytes written, errors. |
+| `UpDownCounter` | `.add(delta, attrs?)` (bi-directional) | queue depth, connection count, in-flight requests. |
+| `Gauge` | `.record(value, attrs?)` (last value wins) | memory usage, temperature, current rate. |
+| `Histogram` | `.record(value, attrs?)` | latencies, payload sizes. Default boundaries are latency-shaped (ms): `[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`. |
+
+Non-finite values (`NaN`, `Infinity`) are dropped silently. Negative deltas on a monotonic counter are dropped silently — use an up-down counter when both directions matter.
+
+---
+
+## Trace (`forge/telemetry/trace`)
+
+```ts
+import {
+  createTracer,
+  simpleSpanProcessor,
+  parentBasedSampler,
+  ratioSampler,
+} from "forge/telemetry/trace";
+import { stdoutSpanExporter } from "forge/telemetry/trace/exporters/stdout";
+
+const tracer = createTracer({
+  resource: { serviceName: "api" },
+  sampler: parentBasedSampler({ root: ratioSampler({ rate: 0.1 }) }),
+  processor: simpleSpanProcessor({ exporter: stdoutSpanExporter() }),
+});
+
+await tracer.withSpan("checkout", async (span) => {
+  span.setAttribute("user.id", userId);
+  await charge();
+  span.setStatus({ code: "ok" });
+});
+```
+
+`withSpan` automatically:
+
+- inherits the active `TelemetryContext` (so `tracer.withSpan` nested inside an HTTP request becomes a child of the request span);
+- ends the span when the callback returns or throws;
+- on throw, sets status to `error` with the thrown message and rethrows.
+
+### Samplers
+
+| Sampler | Behavior |
+| :--- | :--- |
+| `alwaysOnSampler()` | Record every span. |
+| `alwaysOffSampler()` | Drop every span. |
+| `ratioSampler({ rate })` | Deterministic per-trace keep rate (`0..1`). |
+| `parentBasedSampler({ root, parentSampled?, parentNotSampled? })` | Delegates based on the parent span's SAMPLED flag. Defaults inherit the parent's decision. |
+
+### Processors
+
+| Processor | Behavior |
+| :--- | :--- |
+| `simpleSpanProcessor({ exporter })` | Exports every span on `onEnd`. Good for tests + low-volume traces. |
+| `batchSpanProcessor({ exporter, maxQueueSize?, maxExportBatchSize?, scheduledDelayMs?, exportTimeoutMs? })` | Bounded queue + timer-based batching. Recommended for production. Drops the oldest spans when the queue is full. |
+
+---
+
+## Wire exporters
+
+### `forge/telemetry/exporters/otlp-http`
+
+Zero-dependency OTLP/HTTP **JSON** exporters — one factory per signal, all sharing a retry-aware transport (exponential backoff with jitter; retries on 408/429/5xx; bails on other 4xx).
+
+```ts
+import { createLog } from "forge/telemetry/log";
+import { createMeter } from "forge/telemetry/meter";
+import { createTracer, batchSpanProcessor } from "forge/telemetry/trace";
+import {
+  otlpHttpLogExporter,
+  otlpHttpMeterExporter,
+  otlpHttpTraceExporter,
+} from "forge/telemetry/exporters/otlp-http";
+
+const resource = { serviceName: "api", environment: "production" };
+const headers = { "x-honeycomb-team": process.env.HONEYCOMB_API_KEY! };
+
+const log = createLog({
+  exporter: otlpHttpLogExporter({
+    resource,
+    url: "https://api.honeycomb.io/v1/logs",
+    headers,
+  }),
+});
+
+const meter = createMeter({
+  resource,
+  exporter: otlpHttpMeterExporter({
+    url: "https://api.honeycomb.io/v1/metrics",
+    headers,
+  }),
+});
+
+const tracer = createTracer({
+  resource,
+  processor: batchSpanProcessor({
+    exporter: otlpHttpTraceExporter({
+      url: "https://api.honeycomb.io/v1/traces",
+      headers,
+    }),
+  }),
+});
+```
+
+Default endpoints follow the OTLP spec (`http://localhost:4318/v1/{logs,metrics,traces}`) so a local collector needs no config.
+
+### `forge/telemetry/exporters/prometheus`
+
+The Prometheus exposition format is pull-based; the exporter keeps the latest batch in memory and exposes a `render()` method.
+
+```ts
+import { createMeter } from "forge/telemetry/meter";
+import { prometheusMeterExporter } from "forge/telemetry/exporters/prometheus";
+
+const exporter = prometheusMeterExporter();
+const meter = createMeter({
+  resource: { serviceName: "api" },
+  exporter,
+  intervalMs: 1_000,
+});
+
+Bun.serve({
+  port: 9100,
+  fetch(req) {
+    if (new URL(req.url).pathname === "/metrics") {
+      return new Response(exporter.render(), {
+        headers: { "content-type": "text/plain; version=0.0.4" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  },
+});
+```
+
+Up-down counters are emitted as Prometheus `gauge` (no monotonic constraint). Histograms produce `_bucket{le=...}` + `_sum` + `_count` lines with cumulative counts.
+
+---
+
 ## Roadmap
 
-- **Next PR:** `forge/telemetry/meter` (counters, gauges, histograms), `forge/telemetry/trace` (spans, samplers, processors), OTLP/HTTP and Prometheus exporters.
-- **Then:** opt-in instrumentation wrappers (`tracedFetch`, `tracedSqlite`, `tracedPg`), `initTelemetry()`, end-to-end `TestTelemetry` for asserting across all three signals at once.
+- **Next PR:** opt-in instrumentation wrappers (`tracedFetch`, `tracedSqlite`, `tracedPg`), `initTelemetry()`, end-to-end `TestTelemetry` for asserting across all three signals at once.
+- **Later:** OTLP/HTTP protobuf body encoder, OTLP/gRPC transport, Datadog-shaped JSON exporter.

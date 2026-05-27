@@ -78,6 +78,54 @@
     "./telemetry/log/testing": {
       "import": "./dist/telemetry/log/testing/index.js",
       "types": "./dist/telemetry/log/testing/index.d.ts"
+    },
+    "./telemetry/meter": {
+      "import": "./dist/telemetry/meter/index.js",
+      "types": "./dist/telemetry/meter/index.d.ts"
+    },
+    "./telemetry/meter/exporters/stdout": {
+      "import": "./dist/telemetry/meter/exporters/stdout/index.js",
+      "types": "./dist/telemetry/meter/exporters/stdout/index.d.ts"
+    },
+    "./telemetry/meter/exporters/null": {
+      "import": "./dist/telemetry/meter/exporters/null/index.js",
+      "types": "./dist/telemetry/meter/exporters/null/index.d.ts"
+    },
+    "./telemetry/meter/exporters/recording": {
+      "import": "./dist/telemetry/meter/exporters/recording/index.js",
+      "types": "./dist/telemetry/meter/exporters/recording/index.d.ts"
+    },
+    "./telemetry/meter/testing": {
+      "import": "./dist/telemetry/meter/testing/index.js",
+      "types": "./dist/telemetry/meter/testing/index.d.ts"
+    },
+    "./telemetry/trace": {
+      "import": "./dist/telemetry/trace/index.js",
+      "types": "./dist/telemetry/trace/index.d.ts"
+    },
+    "./telemetry/trace/exporters/stdout": {
+      "import": "./dist/telemetry/trace/exporters/stdout/index.js",
+      "types": "./dist/telemetry/trace/exporters/stdout/index.d.ts"
+    },
+    "./telemetry/trace/exporters/null": {
+      "import": "./dist/telemetry/trace/exporters/null/index.js",
+      "types": "./dist/telemetry/trace/exporters/null/index.d.ts"
+    },
+    "./telemetry/trace/exporters/recording": {
+      "import": "./dist/telemetry/trace/exporters/recording/index.js",
+      "types": "./dist/telemetry/trace/exporters/recording/index.d.ts"
+    },
+    "./telemetry/trace/testing": {
+      "import": "./dist/telemetry/trace/testing/index.js",
+      "types": "./dist/telemetry/trace/testing/index.d.ts"
+    },
+    "./telemetry/exporters/otlp-http": {
+      "import": "./dist/telemetry/exporters/otlp-http/index.js",
+      "types": "./dist/telemetry/exporters/otlp-http/index.d.ts"
+    },
+    "./telemetry/exporters/prometheus": {
+      "import": "./dist/telemetry/exporters/prometheus/index.js",
+      "types": "./dist/telemetry/exporters/prometheus/index.d.ts"
     }
   },
   "devDependencies": {
@@ -87,7 +135,7 @@
     "typescript": "^6"
   },
   "scripts": {
-    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts --outdir dist --root src --splitting --target node",
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts --outdir dist --root src --splitting --target node",
     "check": "tsc --noEmit",
     "test": "bun test"
   }
