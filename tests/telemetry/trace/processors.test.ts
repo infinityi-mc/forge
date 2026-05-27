@@ -35,6 +35,39 @@ describe("simpleSpanProcessor", () => {
     expect(() => tracer.startSpan("a").end()).not.toThrow();
     expect(() => tracer.startSpan("b").end()).not.toThrow();
   });
+
+  test("async exporter rejection does not produce unhandled rejection", async () => {
+    // Regression: previously the .catch() handler re-threw when
+    // propagateExporterErrors was true, producing a new rejected
+    // promise nobody held. onEnd is sync so async failures must always
+    // be routed to stderr.
+    const asyncFailingExporter = {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async export() {
+        throw new Error("network down");
+      },
+    };
+    const tracer = createTracer({
+      resource,
+      processor: simpleSpanProcessor({
+        exporter: asyncFailingExporter,
+        propagateExporterErrors: true,
+      }),
+    });
+
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown) => rejections.push(err);
+    process.on("unhandledRejection", onRejection);
+    try {
+      tracer.startSpan("a").end();
+      // give the async catch a chance to run
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    expect(rejections).toHaveLength(0);
+  });
 });
 
 describe("batchSpanProcessor", () => {

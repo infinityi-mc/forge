@@ -29,10 +29,13 @@ export function simpleSpanProcessor(
       try {
         const maybe = exporter.export([span]);
         if (maybe && typeof (maybe as Promise<void>).then === "function") {
-          (maybe as Promise<void>).catch((err) => {
-            if (propagateExporterErrors) throw err;
-            writeFallback(err, [span]);
-          });
+          // `onEnd` is synchronous and has already returned by the time
+          // an async export rejects, so we cannot bubble the error to
+          // a caller without creating an unhandled rejection. The
+          // `propagateExporterErrors` flag therefore only applies to
+          // synchronous throws (the outer catch); async failures are
+          // always routed to stderr.
+          (maybe as Promise<void>).catch((err) => writeFallback(err, [span]));
         }
       } catch (err) {
         if (propagateExporterErrors) throw err;
