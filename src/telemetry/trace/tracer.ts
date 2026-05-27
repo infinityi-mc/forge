@@ -153,10 +153,12 @@ export const createTracer: CreateTracer = (options: TracerOptions): Tracer => {
       }
     }
 
+    // Per the OTel sampling spec only `record_and_sampled` may
+    // propagate SAMPLED=1; `drop` and `record_only` MUST clear it.
     let traceFlags = parent?.traceFlags ?? 0;
     if (decision.decision === "record_and_sampled") {
       traceFlags |= TRACE_FLAGS.SAMPLED;
-    } else if (decision.decision === "drop") {
+    } else {
       traceFlags &= ~TRACE_FLAGS.SAMPLED;
     }
 

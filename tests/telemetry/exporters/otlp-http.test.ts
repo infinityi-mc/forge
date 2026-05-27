@@ -51,28 +51,53 @@ function makeFetch(opts: {
 }
 
 describe("otlpHttpLogExporter", () => {
-  test("POSTs an ExportLogsServiceRequest", async () => {
+  test("buffers records and POSTs a single batch on flush", async () => {
     const captured: Captured[] = [];
-    const log = createLog({
-      exporter: otlpHttpLogExporter({
-        resource,
-        fetch: makeFetch({ captured }),
-        maxRetries: 0,
-      }),
+    const exporter = otlpHttpLogExporter({
+      resource,
+      fetch: makeFetch({ captured }),
+      maxRetries: 0,
     });
+    const log = createLog({ exporter });
     log.info("hi", { user: "alice" });
+    log.info("there", { user: "bob" });
+    expect(captured).toHaveLength(0); // nothing sent yet
     await log.flush?.();
 
     expect(captured).toHaveLength(1);
-    const body = captured[0]!.body as { resourceLogs: unknown[] };
-    expect(body.resourceLogs).toHaveLength(1);
-    const rec = (body.resourceLogs[0] as { scopeLogs: { logRecords: unknown[] }[] })
-      .scopeLogs[0]!.logRecords[0] as {
-      severityText: string;
-      body: { stringValue: string };
+    const body = captured[0]!.body as {
+      resourceLogs: { scopeLogs: { logRecords: { severityText: string; body: { stringValue: string } }[] }[] }[];
     };
-    expect(rec.severityText).toBe("INFO");
-    expect(rec.body.stringValue).toBe("hi");
+    const records = body.resourceLogs[0]!.scopeLogs[0]!.logRecords;
+    expect(records).toHaveLength(2);
+    expect(records[0]!.body.stringValue).toBe("hi");
+    expect(records[1]!.body.stringValue).toBe("there");
+  });
+
+  test("HTTP failures do not throw to the caller of log.info", async () => {
+    // Regression: previously the exporter ran the request inside an
+    // unawaited async export() so rejections became unhandled. Now the
+    // failure is captured during flush() and routed to stderr.
+    const exporter = otlpHttpLogExporter({
+      resource,
+      fetch: makeFetch({ captured: [], status: 400 }),
+      maxRetries: 0,
+    });
+    const log = createLog({ exporter });
+    expect(() => log.info("hi")).not.toThrow();
+    await expect(log.flush?.()).resolves.toBeUndefined();
+  });
+
+  test("propagateExporterErrors=true surfaces failures from flush", async () => {
+    const exporter = otlpHttpLogExporter({
+      resource,
+      fetch: makeFetch({ captured: [], status: 400 }),
+      maxRetries: 0,
+      propagateExporterErrors: true,
+    });
+    const log = createLog({ exporter });
+    log.info("hi");
+    await expect(log.flush?.()).rejects.toThrow();
   });
 });
 

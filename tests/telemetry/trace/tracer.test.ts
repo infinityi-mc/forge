@@ -183,6 +183,29 @@ describe("samplers", () => {
     expect(kept).toBeLessThan(150);
   });
 
+  test("record_only sampling decision clears SAMPLED bit", () => {
+    // Regression: previously the tracer only cleared the SAMPLED bit
+    // for `drop`; `record_only` inherited the parent's flag and could
+    // propagate SAMPLED=1 to children/downstream services.
+    const recordOnly = {
+      shouldSample: () => ({ decision: "record_only" as const }),
+      description: "test:record_only",
+    };
+    const { tracer, exporter } = makeTracer({ sampler: recordOnly });
+    withContext(
+      {
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: 1, // parent says SAMPLED
+      },
+      () => {
+        tracer.startSpan("op").end();
+      },
+    );
+    expect(exporter.spans).toHaveLength(1);
+    expect(exporter.spans[0]!.traceFlags & 1).toBe(0);
+  });
+
   test("dropped withSpan clears SAMPLED bit in propagated context", () => {
     // Regression: withSpan used to hardcode TRACE_FLAGS.SAMPLED in the
     // root-context branch, so a dropped parent still told children to
