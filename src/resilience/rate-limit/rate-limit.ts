@@ -63,8 +63,6 @@ export function rateLimit(options: RateLimitOptions): RateLimitPolicy {
   ): Promise<T> {
     if (ctx.signal.aborted) throw ctx.signal.reason;
 
-    instruments.attempts()?.add(1, { policy: "rate-limit", mode });
-
     let countedAsWaiting = false;
     try {
       while (true) {
@@ -87,6 +85,7 @@ export function rateLimit(options: RateLimitOptions): RateLimitPolicy {
       if (countedAsWaiting) waiting = Math.max(0, waiting - 1);
     }
 
+    instruments.attempts()?.add(1, { policy: "rate-limit", mode });
     return op(ctx);
   }
 

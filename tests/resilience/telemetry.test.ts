@@ -4,6 +4,8 @@ import {
   circuitBreaker,
   combine,
   exponentialBackoff,
+  RateLimitedError,
+  rateLimit,
   retry,
   timeout,
   TimeoutError,
@@ -55,14 +57,14 @@ describe("resilience telemetry integration", () => {
       (m) => m.descriptor.name === "forge_resilience_attempts_total",
     );
     expect(attemptsCounter).toBeDefined();
-    expect(
-      (attemptsCounter!.points[0] as { value: number }).value,
-    ).toBe(3);
+    expect((attemptsCounter!.points[0] as { value: number }).value).toBe(3);
 
     // Span events surface as one-shot spans with no parent — but
     // they carry the configured event name as the span name in our
     // adapter implementation. Two span events fired (one per retry).
-    const retrySpans = t.spans.filter((s) => s.name === "resilience.retry.attempt");
+    const retrySpans = t.spans.filter(
+      (s) => s.name === "resilience.retry.attempt",
+    );
     expect(retrySpans).toHaveLength(2);
     expect(retrySpans[0]!.attributes["attempt_number"]).toBe(1);
     expect(retrySpans[1]!.attributes["attempt_number"]).toBe(2);
@@ -100,9 +102,7 @@ describe("resilience telemetry integration", () => {
       (m) => m.descriptor.name === "forge_resilience_timeout_total",
     );
     expect(timeouts).toBeDefined();
-    expect(
-      (timeouts!.points[0] as { value: number }).value,
-    ).toBe(1);
+    expect((timeouts!.points[0] as { value: number }).value).toBe(1);
 
     const triggered = t.spans.filter(
       (s) => s.name === "resilience.timeout.triggered",
@@ -157,6 +157,43 @@ describe("resilience telemetry integration", () => {
     const last = stateChanges[stateChanges.length - 1]!;
     expect(last.attributes["from_state"]).toBe("closed");
     expect(last.attributes["to_state"]).toBe("open");
+  });
+
+  test("rateLimit attempts counter only counts admitted executions", async () => {
+    const t = createTestTelemetry();
+    const clock = new TestClock();
+    const limiter = rateLimit({
+      algorithm: { kind: "token-bucket", tokensPerSecond: 1, burst: 1 },
+      mode: "throw",
+      telemetry: { meter: t.meter, tracer: t.tracer },
+      clock,
+    });
+
+    let executed = 0;
+    expect(
+      await limiter.execute(() => {
+        executed++;
+        return "admitted";
+      }, executionContext()),
+    ).toBe("admitted");
+
+    const rejected = await limiter
+      .execute(() => {
+        executed++;
+        return "rejected";
+      }, executionContext())
+      .catch((e) => e);
+    expect(rejected).toBeInstanceOf(RateLimitedError);
+    expect(executed).toBe(1);
+
+    await t.flushAll();
+
+    const batch = t.batches[0]!;
+    const attempts = batch.metrics.find(
+      (m) => m.descriptor.name === "forge_resilience_attempts_total",
+    );
+    expect(attempts).toBeDefined();
+    expect((attempts!.points[0] as { value: number }).value).toBe(1);
   });
 
   test("bulkhead emits bulkhead_queue_size gauge", async () => {
