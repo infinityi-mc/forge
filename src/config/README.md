@@ -349,7 +349,20 @@ defineConfig(schema, { logger: log });
 //   }
 ```
 
-The `Logger` parameter is **structurally typed** — any object with `info` / `warn` / `error` methods that accept `(msg, attrs)` works, including `console`. `forge/config` deliberately does *not* import from `forge/telemetry/log`, so the module stays free of a hard telemetry dependency. The `loaded_keys` and `redacted_keys` arrays carry **paths only, never values** — secrets cannot leak through the boot summary.
+The `Logger` parameter is **structurally typed** — any object with `info` / `warn` / `error` methods that accept `(msg, attrs)` works, including `console`. `forge/config` deliberately does *not* import from `forge/telemetry/log`, so the module stays free of a hard telemetry dependency.
+
+Field semantics:
+
+- **`loaded_keys`** — every dotted path the validator placed into the tree, including:
+  - leaves whose raw value was parsed from a source,
+  - leaves that fell back to a `.default(…)` value, and
+  - `.optional()` leaves left as `undefined`. These are tree positions the loader decided on; they appear in the list even though the runtime value is `undefined`.
+
+  If you want "keys with a defined runtime value" specifically, filter against the tree at the call site.
+
+- **`redacted_keys`** — the subset of `loaded_keys` that carried a `Secret`-typed value (parsed-from-source or applied-from-default). `.optional()` leaves left as `undefined` never appear here because there is no secret value to mask.
+
+- **Both arrays carry paths only, never values** — secrets cannot leak through the boot summary.
 
 ---
 

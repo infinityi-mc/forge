@@ -17,7 +17,18 @@
 export interface ConfigDiagnostic {
   /** Dotted schema path of the failing leaf (e.g. `"db.pool.max"`). */
   readonly path: string;
-  /** Environment variable name resolved for the leaf (e.g. `"DB_POOL_MAX"`). */
+  /**
+   * Environment variable name **derived from the schema path**
+   * (e.g. `"DB_POOL_MAX"`). Always populated regardless of which
+   * source produced the failing value. This is the env var name an
+   * operator would set to feed the leaf via the static
+   * {@link defineConfig} path; for diagnostics that originated from a
+   * `defineDynamicConfig` snapshot, the relevant identifier is
+   * `path` (dynamic providers key off the dotted schema path, not
+   * environment variables — `envVar` is still included for symmetry,
+   * so the diagnostic surface is identical between the static and
+   * dynamic loaders).
+   */
   readonly envVar: string;
   /**
    * Whether the value was missing entirely or present-but-invalid.

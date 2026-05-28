@@ -31,10 +31,20 @@ export type SnapshotReader = (entry: LeafEntry) => string | undefined;
  *   that knows whether mutation should be locked (static config
  *   freezes once at boot; dynamic config freezes each snapshot before
  *   exposing it via the proxy).
- * - `loadedKeys` lists every leaf whose value made it into the tree
- *   (defaults included), and `redactedKeys` lists the subset that
- *   carried a `Secret`-typed value — both fed to the boot-summary
- *   logger.
+ * - `loadedKeys` lists **every dotted path the validator placed into
+ *   the tree**, including:
+ *   - leaves whose raw value was parsed successfully,
+ *   - leaves that fell back to a `.default(...)` value, and
+ *   - leaves marked `.optional()` that were left as `undefined` so
+ *     consumers can use `?.` consistently. (These are still tree
+ *     positions, hence still "loaded" — they just hold `undefined`.)
+ *   The list is **not** filtered to keys whose final value is
+ *   defined; if you need that, intersect with the tree at the caller.
+ *   The boot-summary log shape is paths-only, never values.
+ * - `redactedKeys` lists the subset of `loadedKeys` that carried a
+ *   `Secret`-typed value (parsed-from-source or applied-from-default).
+ *   `.optional()` leaves left as `undefined` are *not* listed here
+ *   because no secret value exists.
  */
 export interface ValidationResult<S extends ConfigSchema> {
   readonly tree: Infer<S>;
@@ -84,7 +94,10 @@ export function validateSnapshot<S extends ConfigSchema>(
       }
       if (entry.leaf.isOptional) {
         // Optional leaves are present-but-undefined so consumers can
-        // use `?.` consistently across the tree.
+        // use `?.` consistently across the tree. They count as
+        // `loadedKeys` (the validator decided the leaf's tree
+        // position) but never as `redactedKeys` — there is no secret
+        // value to mask.
         setAtPath(tree, entry.path, undefined);
         loadedKeys.push(entry.path);
         continue;
