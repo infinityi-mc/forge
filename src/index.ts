@@ -12,3 +12,4 @@
  */
 
 export * from "./resilience";
+export * from "./data";
