@@ -245,6 +245,82 @@ describe("defineDynamicConfig", () => {
     await expect(handle.shutdown()).resolves.toBeUndefined();
   });
 
+  test("propagateProviderErrors=true: provider.shutdown() throw resurfaces with phase 'shutdown'", async () => {
+    const failing: DynamicConfigProvider = {
+      name: "fails-on-shutdown",
+      get: () => ({}),
+      subscribe: () => () => {},
+      shutdown: async () => {
+        throw new Error("teardown went sideways");
+      },
+    };
+    const handle = await defineDynamicConfig({} as Record<string, never>, {
+      provider: failing,
+      propagateProviderErrors: true,
+    });
+    await expect(handle.shutdown()).rejects.toMatchObject({
+      name: "ConfigProviderError",
+      provider: "fails-on-shutdown",
+      phase: "shutdown",
+    });
+  });
+
+  test("propagateProviderErrors=true: provider.flush() throw resurfaces with phase 'flush'", async () => {
+    const failing: DynamicConfigProvider = {
+      name: "fails-on-flush",
+      get: () => ({}),
+      subscribe: () => () => {},
+      flush: async () => {
+        throw new Error("flush exploded");
+      },
+    };
+    const handle = await defineDynamicConfig({} as Record<string, never>, {
+      provider: failing,
+      propagateProviderErrors: true,
+    });
+    await expect(handle.flush()).rejects.toMatchObject({
+      name: "ConfigProviderError",
+      provider: "fails-on-flush",
+      phase: "flush",
+    });
+    // Calling shutdown after a deferred flush error still re-throws
+    // the first-seen error (we don't try to be cute and de-dup), but
+    // it doesn't crash.
+    await expect(handle.shutdown()).rejects.toMatchObject({
+      phase: "flush",
+    });
+  });
+
+  test("logger receives the correct phase label on shutdown/flush failures (isolated mode)", async () => {
+    const failing: DynamicConfigProvider = {
+      name: "noisy",
+      get: () => ({}),
+      subscribe: () => () => {},
+      shutdown: async () => {
+        throw new Error("teardown");
+      },
+      flush: async () => {
+        throw new Error("flush");
+      },
+    };
+    const lines: { level: string; msg: string; attrs?: unknown }[] = [];
+    const logger = {
+      info: (msg: string, attrs?: unknown) => lines.push({ level: "info", msg, attrs }),
+      warn: (msg: string, attrs?: unknown) => lines.push({ level: "warn", msg, attrs }),
+      error: (msg: string, attrs?: unknown) => lines.push({ level: "error", msg, attrs }),
+    };
+    const handle = await defineDynamicConfig({} as Record<string, never>, {
+      provider: failing,
+      logger,
+    });
+    await handle.flush();
+    await handle.shutdown();
+    const phases = lines
+      .filter((l) => l.level === "error")
+      .map((l) => (l.attrs as { phase: string }).phase);
+    expect(phases).toEqual(["flush", "shutdown"]);
+  });
+
   test("[Symbol.asyncDispose] aliases shutdown()", async () => {
     const provider = controllableProvider({});
     const handle = await defineDynamicConfig({} as Record<string, never>, {

@@ -67,7 +67,10 @@ export {
   ConfigSourceError,
   ConfigValidationError,
 } from "./errors";
-export type { ConfigDiagnostic } from "./errors";
+export type {
+  ConfigDiagnostic,
+  ConfigProviderErrorPhase,
+} from "./errors";
 
 export { cliSource, dotenvSource, envSource } from "./sources";
 export type {

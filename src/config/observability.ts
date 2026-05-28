@@ -9,6 +9,7 @@
  * @module
  */
 
+import type { ConfigProviderErrorPhase } from "./errors";
 import type { Logger } from "./logger";
 
 /**
@@ -87,7 +88,7 @@ export function emitProviderError(
   logger: Logger,
   attrs: {
     readonly provider: string;
-    readonly phase: "initial-load" | "update" | "on-change" | "subscribe";
+    readonly phase: ConfigProviderErrorPhase;
     readonly error: unknown;
   },
 ): void {

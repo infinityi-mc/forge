@@ -119,21 +119,40 @@ export class ConfigSecretAccessError extends ConfigError {
 }
 
 /**
+ * The lifecycle phase a {@link ConfigProviderError} originated in.
+ *
+ * - `initial-load` — `provider.get()` threw during the seed fetch.
+ * - `update` — a runtime snapshot failed validation.
+ * - `on-change` — the user-supplied `onChange` callback threw.
+ * - `subscribe` — `provider.subscribe()` threw at wire-up time.
+ * - `shutdown` — `provider.shutdown()` or the returned `unsubscribe()`
+ *   threw during teardown.
+ * - `flush` — `provider.flush()` threw on an explicit drain.
+ */
+export type ConfigProviderErrorPhase =
+  | "initial-load"
+  | "update"
+  | "on-change"
+  | "subscribe"
+  | "shutdown"
+  | "flush";
+
+/**
  * A {@link DynamicConfigProvider} failed during fetch / subscribe /
- * shutdown, or an `onChange` callback threw. By default these errors
- * are caught and surfaced through the optional logger; passing
+ * shutdown / flush, or an `onChange` callback threw. By default these
+ * errors are caught and surfaced through the optional logger; passing
  * `propagateProviderErrors: true` to `defineDynamicConfig` raises
  * this class to the caller instead.
  */
 export class ConfigProviderError extends ConfigError {
   readonly provider: string;
-  readonly phase: "initial-load" | "update" | "on-change" | "subscribe";
+  readonly phase: ConfigProviderErrorPhase;
 
   constructor(
     message: string,
     options: ErrorOptions & {
       provider: string;
-      phase: "initial-load" | "update" | "on-change" | "subscribe";
+      phase: ConfigProviderErrorPhase;
     },
   ) {
     super(message, options);

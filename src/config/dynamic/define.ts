@@ -187,7 +187,7 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
   let deferredError: ConfigProviderError | undefined;
 
   const recordError = (
-    phase: "update" | "on-change" | "subscribe",
+    phase: "update" | "on-change" | "subscribe" | "shutdown" | "flush",
     err: unknown,
   ): void => {
     if (propagate && deferredError === undefined) {
@@ -269,13 +269,15 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
     try {
       unsubscribe();
     } catch (err) {
-      recordError("subscribe", err);
+      // Unsubscribe is part of the shutdown lifecycle, so its
+      // failures carry the `"shutdown"` phase label.
+      recordError("shutdown", err);
     }
     if (provider.shutdown !== undefined) {
       try {
         await provider.shutdown();
       } catch (err) {
-        recordError("subscribe", err);
+        recordError("shutdown", err);
       }
     }
     if (deferredError !== undefined) throw deferredError;
@@ -286,7 +288,7 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
       try {
         await provider.flush();
       } catch (err) {
-        recordError("subscribe", err);
+        recordError("flush", err);
       }
     }
     if (deferredError !== undefined) throw deferredError;
