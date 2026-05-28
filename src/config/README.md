@@ -366,6 +366,56 @@ Field semantics:
 
 ---
 
+## Testing
+
+`forge/config/testing` provides async-scoped static overrides plus a
+provider-author conformance suite.
+
+```ts
+import { defineConfig, t } from "forge/config";
+import { mockConfig } from "forge/config/testing";
+
+const config = defineConfig({
+  app: { port: t.port.default(3000) },
+});
+
+await mockConfig({ app: { port: 8080 } }, async () => {
+  config.app.port; // 8080 inside this async scope
+});
+
+config.app.port; // 3000 after the scope settles
+```
+
+`mockConfig` uses `AsyncLocalStorage`, so overrides do not mutate env
+vars or module globals. Nested mocks compose with last write wins, and
+the override scope is popped even when the callback throws.
+
+Provider authors can validate custom dynamic feeds with the same
+contract used by the built-ins:
+
+```ts
+import {
+  assertProviderConformance,
+  recordingProvider,
+} from "forge/config/testing";
+
+await assertProviderConformance(() => {
+  const provider = recordingProvider({ "features.enabled": "false" });
+  return {
+    provider,
+    emit(snapshot) {
+      provider.push(snapshot);
+    },
+  };
+});
+```
+
+The standard scenarios cover `get()` idempotence, subscription order,
+`flush()` draining, `shutdown()` teardown, unsubscribe behavior, and
+isolation between subscriber failures.
+
+---
+
 ## Why not `dotenv` / `convict` / `zod`?
 
 | Concern                           | `dotenv` | `convict` | `zod`        | `forge/config` |
