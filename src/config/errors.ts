@@ -17,7 +17,18 @@
 export interface ConfigDiagnostic {
   /** Dotted schema path of the failing leaf (e.g. `"db.pool.max"`). */
   readonly path: string;
-  /** Environment variable name resolved for the leaf (e.g. `"DB_POOL_MAX"`). */
+  /**
+   * Environment variable name **derived from the schema path**
+   * (e.g. `"DB_POOL_MAX"`). Always populated regardless of which
+   * source produced the failing value. This is the env var name an
+   * operator would set to feed the leaf via the static
+   * {@link defineConfig} path; for diagnostics that originated from a
+   * `defineDynamicConfig` snapshot, the relevant identifier is
+   * `path` (dynamic providers key off the dotted schema path, not
+   * environment variables — `envVar` is still included for symmetry,
+   * so the diagnostic surface is identical between the static and
+   * dynamic loaders).
+   */
   readonly envVar: string;
   /**
    * Whether the value was missing entirely or present-but-invalid.
@@ -115,6 +126,50 @@ export class ConfigSecretAccessError extends ConfigError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ConfigSecretAccessError";
+  }
+}
+
+/**
+ * The lifecycle phase a {@link ConfigProviderError} originated in.
+ *
+ * - `initial-load` — `provider.get()` threw during the seed fetch.
+ * - `update` — a runtime snapshot failed validation.
+ * - `on-change` — the user-supplied `onChange` callback threw.
+ * - `subscribe` — `provider.subscribe()` threw at wire-up time.
+ * - `shutdown` — `provider.shutdown()` or the returned `unsubscribe()`
+ *   threw during teardown.
+ * - `flush` — `provider.flush()` threw on an explicit drain.
+ */
+export type ConfigProviderErrorPhase =
+  | "initial-load"
+  | "update"
+  | "on-change"
+  | "subscribe"
+  | "shutdown"
+  | "flush";
+
+/**
+ * A {@link DynamicConfigProvider} failed during fetch / subscribe /
+ * shutdown / flush, or an `onChange` callback threw. By default these
+ * errors are caught and surfaced through the optional logger; passing
+ * `propagateProviderErrors: true` to `defineDynamicConfig` raises
+ * this class to the caller instead.
+ */
+export class ConfigProviderError extends ConfigError {
+  readonly provider: string;
+  readonly phase: ConfigProviderErrorPhase;
+
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      provider: string;
+      phase: ConfigProviderErrorPhase;
+    },
+  ) {
+    super(message, options);
+    this.name = "ConfigProviderError";
+    this.provider = options.provider;
+    this.phase = options.phase;
   }
 }
 
