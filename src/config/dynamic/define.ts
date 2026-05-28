@@ -70,16 +70,35 @@ export interface DefineDynamicConfigOptions<S extends ConfigSchema> {
   ) => void;
   /**
    * Optional structured logger. Emits:
-   * - `warn "Dynamic config updated"` on every swap.
-   * - `error "Dynamic config provider error"` when the provider or
-   *   `onChange` throws and errors are isolated.
+   * - `warn "Dynamic config updated"` on every snapshot swap.
+   * - `error "Dynamic config provider error"` whenever the provider
+   *   (`subscribe` / `update` / `shutdown` / `flush`) or the
+   *   `onChange` callback throws and errors are isolated.
+   *
+   * When **no** logger is supplied **and** `propagateProviderErrors`
+   * is `false` (the default), isolated errors are silently dropped.
+   * For production deployments either supply a `logger` or set
+   * `propagateProviderErrors: true` so failures are observable.
    */
   logger?: Logger;
   /**
-   * Default `false`: errors from the provider's `get` / `subscribe`
-   * / `shutdown` and from `onChange` are caught and routed to the
-   * logger. Set `true` to let those errors bubble up via a
-   * {@link ConfigProviderError} on the next `flush()`/`shutdown()`.
+   * Default `false`: errors from `subscribe` / runtime update
+   * validation / `onChange` / `provider.shutdown()` / `provider.flush()`
+   * are caught and routed to the optional `logger`. The polling loop
+   * keeps running.
+   *
+   * Set `true` to let the first-seen such error bubble up as a
+   * {@link ConfigProviderError} from the next `flush()` /
+   * `shutdown()` call (the live view is still preserved with the
+   * last-good snapshot until then). Useful when the host application
+   * has its own crash-on-startup-failure policy.
+   *
+   * Note: when both `propagateProviderErrors` is `false` **and** no
+   * `logger` is supplied, isolated errors have no surface and are
+   * dropped — supply at least one to keep failures observable.
+   * Errors from the *initial* fetch and the *initial* validation
+   * always throw regardless of this flag, because without a valid
+   * seed snapshot there is nothing to return.
    */
   propagateProviderErrors?: boolean;
 }

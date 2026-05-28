@@ -51,11 +51,49 @@ describe("diff", () => {
     ).toEqual(["s"]);
   });
 
-  test("treats arrays as opaque values (no per-index walking)", () => {
-    // Arrays aren't a `forge/config` primitive — `t.json<T[]>()` returns
-    // them as a single leaf. `diff` reflects that: an array swap is one
-    // path entry, not N.
+  test("Secret<URL> equality recurses through the URL branch (no false-positive diff)", () => {
+    // Two separate URL parses of the same string are not
+    // reference-equal — without recursing back into `equal()`, the
+    // unwrapped values would Object.is-false, producing a phantom
+    // diff on every poll for any `t.url.secret()` leaf.
+    const a = new Secret(new URL("https://example.com/path"));
+    const b = new Secret(new URL("https://example.com/path"));
+    expect(diff({ s: a }, { s: b })).toEqual([]);
+
+    const c = new Secret(new URL("https://example.com/other"));
+    expect(diff({ s: a }, { s: c })).toEqual(["s"]);
+  });
+
+  test("arrays of primitives compare by element-wise content (no false-positive diff)", () => {
+    expect(diff({ a: [1, 2, 3] }, { a: [1, 2, 3] })).toEqual([]);
     expect(diff({ a: [1, 2, 3] }, { a: [1, 2, 4] })).toEqual(["a"]);
+    // Differing length is a real change.
+    expect(diff({ a: [1, 2, 3] }, { a: [1, 2, 3, 4] })).toEqual(["a"]);
+    // Differing element order is a real change.
+    expect(diff({ a: [1, 2, 3] }, { a: [3, 2, 1] })).toEqual(["a"]);
+    // Empty arrays are equal.
+    expect(diff({ a: [] as number[] }, { a: [] as number[] })).toEqual([]);
+  });
+
+  test("arrays of nested objects compare element-wise via the shared equal walker", () => {
+    expect(
+      diff(
+        { rules: [{ id: 1, weight: 0.5 }, { id: 2, weight: 0.25 }] },
+        { rules: [{ id: 1, weight: 0.5 }, { id: 2, weight: 0.25 }] },
+      ),
+    ).toEqual([]);
+    expect(
+      diff(
+        { rules: [{ id: 1, weight: 0.5 }] },
+        { rules: [{ id: 1, weight: 0.6 }] },
+      ),
+    ).toEqual(["rules"]);
+  });
+
+  test("array diffs surface a single path entry (no per-index walking)", () => {
+    // `t.json<T[]>()` returns the array as one leaf — `diff` reflects
+    // that: an array swap is one path entry, never N indexed paths.
+    expect(diff({ a: [1, 2, 3] }, { a: [9, 9, 9] })).toEqual(["a"]);
   });
 
   test("handles NaN consistently via Object.is", () => {

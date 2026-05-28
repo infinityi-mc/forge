@@ -31,9 +31,14 @@ import { isSecret, Secret } from "../secret";
  * - For `URL` instances, equality is the URL's string serialisation,
  *   not reference identity — two parses of the same URL string are
  *   considered equal.
- * - For `Secret<T>` instances, equality is unwrapped value equality.
- *   The unwrap happens locally and the unwrapped value never leaves
- *   this function.
+ * - For `Secret<T>` instances, equality is unwrapped value equality
+ *   that re-enters the same comparison — so `Secret<URL>` compares
+ *   by URL serialisation, `Secret<string>` by string value, etc. The
+ *   unwrap happens locally and the unwrapped value never leaves this
+ *   function.
+ * - For arrays (e.g. from `t.json<T[]>()`) equality is element-wise
+ *   structural equality, so two snapshots that produce arrays with
+ *   the same content do not false-positive a diff.
  * - Paths that exist on only one side are reported.
  */
 export function diff(
@@ -74,15 +79,47 @@ function equal(a: unknown, b: unknown): boolean {
     return a.toString() === b.toString();
   }
 
-  // Secret equality via the wrapped value. The cost of the unwrap
-  // here is justified — `diff` is called once per dynamic update
-  // (not per request), and the unwrapped value is discarded
-  // immediately.
+  // Secret equality via the wrapped value. We recurse back into
+  // `equal()` so the type-specific branches above (URL, arrays,
+  // nested Secret) still apply — `Object.is` here would
+  // false-positive a `Secret<URL>` whose two `URL` instances came
+  // from separate parses of the same string. The cost of the unwrap
+  // is justified — `diff` is called once per dynamic update (not per
+  // request), and the unwrapped value is discarded immediately.
   if (isSecret(a) && isSecret(b)) {
-    return Object.is(
+    return equal(
       (a as Secret<unknown>).unwrap(),
       (b as Secret<unknown>).unwrap(),
     );
+  }
+
+  // Array equality by element-wise structural comparison. Without
+  // this branch, `t.json<T[]>()` leaves would false-positive on every
+  // poll — `Object.is` reference-compares array instances, so two
+  // snapshots that parsed the same JSON would always look distinct.
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!equal(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  // Plain-record equality for objects that appear *inside* a leaf
+  // (e.g. items of an array under a `t.json<T[]>()` leaf, or values
+  // of a `t.json<Record<string, …>>()` leaf). At the top level the
+  // `walk` function handles records by descending and producing per-
+  // key diff paths, but once we are inside `equal` we are comparing a
+  // single leaf value — so this branch makes it a proper structural
+  // deep-equal predicate.
+  if (isPlainRecord(a) && isPlainRecord(b)) {
+    const aKeys = Object.keys(a);
+    if (aKeys.length !== Object.keys(b).length) return false;
+    for (const key of aKeys) {
+      if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+      if (!equal(a[key], b[key])) return false;
+    }
+    return true;
   }
 
   return false;
