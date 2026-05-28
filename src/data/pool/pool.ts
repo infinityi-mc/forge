@@ -25,6 +25,7 @@ export function createPool<Resource extends PoolResource>(
     waiters: [] as Waiter<Resource>[],
     total: 0,
     draining: false,
+    starting: [] as Array<Promise<void>>,
     drainResolvers: [] as Array<() => void>,
   };
 
@@ -100,6 +101,7 @@ export function createPool<Resource extends PoolResource>(
 
   function notifyDrainIfComplete(): void {
     if (state.active.size !== 0) return;
+    if (state.starting.length !== 0) return;
     while (state.drainResolvers.length > 0) {
       state.drainResolvers.shift()?.();
     }
@@ -168,7 +170,7 @@ export function createPool<Resource extends PoolResource>(
         state.total -= 1;
         recordPoolGauges();
       }
-      if (state.active.size === 0) return;
+      if (state.active.size === 0 && state.starting.length === 0) return;
       await new Promise<void>((resolve) => state.drainResolvers.push(resolve));
     },
 
@@ -178,14 +180,20 @@ export function createPool<Resource extends PoolResource>(
   };
 
   for (let index = 0; index < min; index += 1) {
-    void createResource().then((resource) => {
+    const starting = createResource().then(async (resource) => {
       if (state.draining) {
-        void closeResource(resource);
+        await closeResource(resource);
         state.total -= 1;
-      } else {
+      } else if (!resolveWaiter(resource)) {
         state.idle.push(resource);
+        recordPoolGauges();
       }
+    }).finally(() => {
+      const index = state.starting.indexOf(starting);
+      if (index >= 0) state.starting.splice(index, 1);
+      notifyDrainIfComplete();
     });
+    state.starting.push(starting);
   }
 
   return Object.freeze(pool);

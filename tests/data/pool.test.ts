@@ -64,4 +64,65 @@ describe("data pool", () => {
     await drained;
     expect(closed).toBe(1);
   });
+
+  test("pre-warmed resources resolve queued waiters instead of idling", async () => {
+    let resolveCreate!: (resource: { id: number }) => void;
+    const pool = createPool({
+      min: 1,
+      max: 1,
+      acquireTimeoutMs: 50,
+      create: () => new Promise<{ id: number }>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    });
+
+    const leasePromise = pool.acquire();
+    expect(pool.stats().waiting).toBe(1);
+
+    resolveCreate({ id: 1 });
+    const lease = await leasePromise;
+    expect(lease.resource.id).toBe(1);
+    expect(pool.stats().active).toBe(1);
+    expect(pool.stats().idle).toBe(0);
+    lease.release();
+  });
+
+  test("shutdown waits for in-flight pre-warm resources to close", async () => {
+    let resolveCreate!: (resource: { shutdown: () => Promise<void> }) => void;
+    let closed = false;
+    let resolveShutdown!: () => void;
+    const pool = createPool({
+      min: 1,
+      max: 1,
+      create: () => new Promise<{ shutdown: () => Promise<void> }>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    });
+
+    const shutdown = pool.shutdown();
+    let shutdownResolved = false;
+    void shutdown.then(() => {
+      shutdownResolved = true;
+    });
+
+    await Promise.resolve();
+    expect(shutdownResolved).toBe(false);
+
+    resolveCreate({
+      shutdown: async () => {
+        await new Promise<void>((resolve) => {
+          resolveShutdown = resolve;
+        });
+        closed = true;
+      },
+    });
+    for (let index = 0; index < 5 && resolveShutdown === undefined; index += 1) {
+      await Promise.resolve();
+    }
+    expect(shutdownResolved).toBe(false);
+
+    resolveShutdown();
+    await shutdown;
+    expect(closed).toBe(true);
+  });
 });
