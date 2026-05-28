@@ -9,6 +9,7 @@
  */
 
 export { createDb } from "./db";
+export { createPool } from "./pool";
 export { raw, sql } from "./sql";
 export type { SqlFragment } from "./sql";
 
@@ -28,6 +29,7 @@ export type {
   ComparisonOperator,
   CompiledQuery,
   CreateDbOptions,
+  DataTelemetryOptions,
   DatabaseSchema,
   Db,
   DeleteQueryBuilder,
@@ -48,3 +50,10 @@ export type {
   UpdateQueryBuilder,
   UpdateType,
 } from "./types";
+export type {
+  Pool,
+  PoolLease,
+  PoolOptions,
+  PoolResource,
+  PoolStats,
+} from "./pool";

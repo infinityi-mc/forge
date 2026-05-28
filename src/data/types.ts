@@ -75,6 +75,7 @@ export interface QueryResult<Row = unknown> {
 export interface Driver {
   readonly name: string;
   execute<Row = unknown>(query: CompiledQuery): Promise<QueryResult<Row>> | QueryResult<Row>;
+  ping?(): Promise<void> | void;
   shutdown?(): Promise<void> | void;
 }
 
@@ -87,6 +88,36 @@ export interface Dialect {
 export interface CreateDbOptions {
   readonly dialect: Dialect;
   readonly driver: Driver;
+  readonly telemetry?: DataTelemetryOptions;
+}
+
+export interface DataTelemetryOptions {
+  readonly meter?: {
+    createHistogram(
+      name: string,
+      options?: { description?: string; unit?: string; boundaries?: readonly number[] },
+    ): { record(value: number, attributes?: Record<string, string | number | boolean>): void };
+    createGauge?(
+      name: string,
+      options?: { description?: string; unit?: string },
+    ): { record(value: number, attributes?: Record<string, string | number | boolean>): void };
+  };
+  readonly tracer?: {
+    startSpan(
+      name: string,
+      options?: {
+        kind?: "internal" | "server" | "client" | "producer" | "consumer";
+        attributes?: Record<string, string | number | boolean | undefined>;
+      },
+    ): {
+      setAttribute(key: string, value: string | number | boolean): unknown;
+      setAttributes(attributes: Record<string, string | number | boolean | undefined>): unknown;
+      setStatus(status: { code: "unset" | "ok" | "error"; message?: string }): unknown;
+      addEvent(name: string, attributes?: Record<string, string | number | boolean | undefined>): unknown;
+      end(endTime?: Date): void;
+    };
+  };
+  readonly includeParams?: boolean;
 }
 
 export interface RawQueryBuilder<Row> {
@@ -172,5 +203,6 @@ export interface Db<Schema extends DatabaseSchema> {
   ): DeleteQueryBuilder<TableRow<Schema, Table>>;
   raw<Row = unknown>(query: { readonly text: string; readonly params: readonly unknown[] }): RawQueryBuilder<Row>;
   execute<Row = unknown>(query: CompiledQuery): Promise<QueryResult<Row>>;
+  ping(): Promise<void>;
   shutdown(): Promise<void>;
 }

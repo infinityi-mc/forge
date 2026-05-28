@@ -1,4 +1,5 @@
 import { QueryError } from "./errors";
+import { createDataInstrumentation } from "./telemetry/instrumentation";
 import { compileRaw } from "./query/compile";
 import { createDeleteBuilder } from "./query/delete";
 import { ExecutableQuery } from "./query/executor";
@@ -25,6 +26,11 @@ import type { SqlFragment } from "./sql";
 export function createDb<Schema extends DatabaseSchema>(
   options: CreateDbOptions,
 ): Db<Schema> {
+  const instrumentation = createDataInstrumentation({
+    dialect: options.dialect.name,
+    telemetry: options.telemetry,
+  });
+
   const handle: Db<Schema> = {
     dialect: options.dialect,
 
@@ -57,10 +63,15 @@ export function createDb<Schema extends DatabaseSchema>(
     },
 
     async execute<Row = unknown>(query: CompiledQuery): Promise<QueryResult<Row>> {
+      const span = instrumentation.startQuerySpan(query);
+      const startedAt = performance.now();
       try {
         const result = await options.driver.execute<Row>(query);
-        return normalizeResult<Row>(query, result);
+        const normalized = normalizeResult<Row>(query, result);
+        instrumentation.recordQuerySuccess(query, normalized, startedAt, span);
+        return normalized;
       } catch (cause) {
+        instrumentation.recordQueryFailure(query, cause, startedAt, span);
         if (cause instanceof QueryError) throw cause;
         throw new QueryError("Data query failed", {
           cause,
@@ -69,6 +80,14 @@ export function createDb<Schema extends DatabaseSchema>(
           dialect: options.dialect.name,
         });
       }
+    },
+
+    async ping(): Promise<void> {
+      if (options.driver.ping !== undefined) {
+        await options.driver.ping();
+        return;
+      }
+      await handle.execute({ sql: "select 1", params: [], kind: "raw", returning: false });
     },
 
     async shutdown(): Promise<void> {
