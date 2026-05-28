@@ -23,6 +23,7 @@
 import { writeFailFast } from "./diagnostics";
 import { ConfigValidationError } from "./errors";
 import type { Logger } from "./logger";
+import { createMockableConfig } from "./mockable";
 import { emitBootSummary } from "./observability";
 import { deepFreeze } from "./schema/walk";
 import { cliSource } from "./sources/cli";
@@ -125,7 +126,7 @@ export function defineConfig<S extends ConfigSchema>(
     });
   }
 
-  return frozen;
+  return createMockableConfig(schema, frozen);
 }
 
 /**
