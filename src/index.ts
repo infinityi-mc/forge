@@ -3,9 +3,10 @@
  *
  * Submodules:
  * - `forge/telemetry` — unified logs, metrics, and traces.
- * - `forge/resilience` — composable fault tolerance (retry, timeout;
- *   circuit-breaker / rate-limit / bulkhead / fallback / hedge follow
- *   in PR B and PR C).
+ * - `forge/resilience` — composable fault tolerance (retry, timeout,
+ *   circuit-breaker, rate-limit, bulkhead, fallback, hedge).
+ * - `forge/config` — schema-validated, fail-fast configuration with
+ *   native secret redaction.
  *
  * @module
  */

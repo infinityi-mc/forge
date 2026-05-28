@@ -166,6 +166,22 @@
     "./resilience/hedge": {
       "import": "./dist/resilience/hedge/index.js",
       "types": "./dist/resilience/hedge/index.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config/index.js",
+      "types": "./dist/config/index.d.ts"
+    },
+    "./config/schema": {
+      "import": "./dist/config/schema/index.js",
+      "types": "./dist/config/schema/index.d.ts"
+    },
+    "./config/sources": {
+      "import": "./dist/config/sources/index.js",
+      "types": "./dist/config/sources/index.d.ts"
+    },
+    "./config/diagnostics": {
+      "import": "./dist/config/diagnostics/index.js",
+      "types": "./dist/config/diagnostics/index.d.ts"
     }
   },
   "devDependencies": {
@@ -175,7 +191,7 @@
     "typescript": "^6"
   },
   "scripts": {
-    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts src/resilience/circuit-breaker/index.ts src/resilience/rate-limit/index.ts src/resilience/bulkhead/index.ts src/resilience/fallback/index.ts src/resilience/hedge/index.ts --outdir dist --root src --splitting --target node",
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts src/resilience/circuit-breaker/index.ts src/resilience/rate-limit/index.ts src/resilience/bulkhead/index.ts src/resilience/fallback/index.ts src/resilience/hedge/index.ts src/config/index.ts src/config/schema/index.ts src/config/sources/index.ts src/config/diagnostics/index.ts --outdir dist --root src --splitting --target node",
     "check": "tsc --noEmit",
     "test": "bun test"
   }
