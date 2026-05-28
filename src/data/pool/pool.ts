@@ -26,7 +26,9 @@ export function createPool<Resource extends PoolResource>(
     total: 0,
     draining: false,
     starting: [] as Array<Promise<void>>,
-    drainResolvers: [] as Array<() => void>,
+    closing: [] as Array<Promise<void>>,
+    closeErrors: [] as unknown[],
+    drainResolvers: [] as Array<{ resolve: () => void; reject: (error: unknown) => void }>,
   };
 
   const waitHistogram = options.telemetry?.meter?.createHistogram(
@@ -86,9 +88,7 @@ export function createPool<Resource extends PoolResource>(
     if (!state.active.delete(resource)) return;
     if (!state.draining && resolveWaiter(resource)) return;
     if (state.draining) {
-      void closeResource(resource);
-      state.total -= 1;
-      notifyDrainIfComplete();
+      trackClose(resource);
       return;
     }
     state.idle.push(resource);
@@ -99,11 +99,38 @@ export function createPool<Resource extends PoolResource>(
     await resource.shutdown?.();
   }
 
+  function trackClose(resource: Resource): void {
+    const closing = closeResource(resource)
+      .catch((cause) => {
+        state.closeErrors.push(cause);
+      })
+      .finally(() => {
+        const index = state.closing.indexOf(closing);
+        if (index >= 0) state.closing.splice(index, 1);
+        state.total -= 1;
+        recordPoolGauges();
+        notifyDrainIfComplete();
+      });
+    state.closing.push(closing);
+  }
+
+  function untrackStarting(starting: Promise<void>): void {
+    const index = state.starting.indexOf(starting);
+    if (index >= 0) state.starting.splice(index, 1);
+    notifyDrainIfComplete();
+  }
+
   function notifyDrainIfComplete(): void {
     if (state.active.size !== 0) return;
     if (state.starting.length !== 0) return;
+    if (state.closing.length !== 0) return;
     while (state.drainResolvers.length > 0) {
-      state.drainResolvers.shift()?.();
+      const waiter = state.drainResolvers.shift()!;
+      if (state.closeErrors.length > 0) {
+        waiter.reject(new AggregateError(state.closeErrors, "Pool resource shutdown failed"));
+      } else {
+        waiter.resolve();
+      }
     }
   }
 
@@ -123,10 +150,24 @@ export function createPool<Resource extends PoolResource>(
       }
 
       if (state.total < options.max) {
-        const resource = await createResource();
-        state.active.add(resource);
-        recordPoolGauges();
-        return makeLease(resource);
+        const acquired = (async () => {
+          const resource = await createResource();
+          if (state.draining) {
+            await closeResource(resource);
+            state.total -= 1;
+            recordPoolGauges();
+            throw new PoolError("Pool is draining");
+          }
+          state.active.add(resource);
+          recordPoolGauges();
+          return makeLease(resource);
+        })();
+        const starting = acquired.then(
+          () => undefined,
+          () => undefined,
+        ).finally(() => untrackStarting(starting));
+        state.starting.push(starting);
+        return await acquired;
       }
 
       return await new Promise<PoolLease<Resource>>((resolve, reject) => {
@@ -170,8 +211,19 @@ export function createPool<Resource extends PoolResource>(
         state.total -= 1;
         recordPoolGauges();
       }
-      if (state.active.size === 0 && state.starting.length === 0) return;
-      await new Promise<void>((resolve) => state.drainResolvers.push(resolve));
+      if (
+        state.active.size === 0 &&
+        state.starting.length === 0 &&
+        state.closing.length === 0
+      ) {
+        if (state.closeErrors.length > 0) {
+          throw new AggregateError(state.closeErrors, "Pool resource shutdown failed");
+        }
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        state.drainResolvers.push({ resolve, reject });
+      });
     },
 
     async shutdown(): Promise<void> {
@@ -189,10 +241,7 @@ export function createPool<Resource extends PoolResource>(
         recordPoolGauges();
       }
     }).finally(() => {
-      const index = state.starting.indexOf(starting);
-      if (index >= 0) state.starting.splice(index, 1);
-      notifyDrainIfComplete();
-    });
+    }).finally(() => untrackStarting(starting));
     state.starting.push(starting);
   }
 

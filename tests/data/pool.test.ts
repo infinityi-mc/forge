@@ -65,6 +65,96 @@ describe("data pool", () => {
     expect(closed).toBe(1);
   });
 
+  test("drain waits for async shutdown when active resources release during drain", async () => {
+    let resolveShutdown!: () => void;
+    let closed = false;
+    const pool = createPool({
+      max: 1,
+      create: () => ({
+        shutdown: async () => {
+          await new Promise<void>((resolve) => {
+            resolveShutdown = resolve;
+          });
+          closed = true;
+        },
+      }),
+    });
+
+    const lease = await pool.acquire();
+    const drained = pool.drain();
+    let drainResolved = false;
+    void drained.then(() => {
+      drainResolved = true;
+    });
+
+    lease.release();
+    for (let index = 0; index < 5 && resolveShutdown === undefined; index += 1) {
+      await Promise.resolve();
+    }
+    expect(drainResolved).toBe(false);
+
+    resolveShutdown();
+    await drained;
+    expect(closed).toBe(true);
+  });
+
+  test("drain waits for in-flight acquire creation and rejects the acquire", async () => {
+    let resolveCreate!: (resource: { shutdown: () => Promise<void> }) => void;
+    let resolveShutdown!: () => void;
+    let closed = false;
+    const pool = createPool({
+      max: 1,
+      create: () => new Promise<{ shutdown: () => Promise<void> }>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    });
+
+    const acquire = pool.acquire();
+    const drained = pool.drain();
+    let drainResolved = false;
+    void drained.then(() => {
+      drainResolved = true;
+    });
+
+    await Promise.resolve();
+    expect(drainResolved).toBe(false);
+
+    resolveCreate({
+      shutdown: async () => {
+        await new Promise<void>((resolve) => {
+          resolveShutdown = resolve;
+        });
+        closed = true;
+      },
+    });
+    for (let index = 0; index < 5 && resolveShutdown === undefined; index += 1) {
+      await Promise.resolve();
+    }
+
+    expect(drainResolved).toBe(false);
+    resolveShutdown();
+    await expect(acquire).rejects.toBeInstanceOf(PoolError);
+    await drained;
+    expect(closed).toBe(true);
+  });
+
+  test("drain rejects when async resource shutdown fails", async () => {
+    const pool = createPool({
+      max: 1,
+      create: () => ({
+        shutdown: async () => {
+          throw new Error("close failed");
+        },
+      }),
+    });
+
+    const lease = await pool.acquire();
+    const drained = pool.drain();
+    lease.release();
+
+    await expect(drained).rejects.toBeInstanceOf(AggregateError);
+  });
+
   test("pre-warmed resources resolve queued waiters instead of idling", async () => {
     let resolveCreate!: (resource: { id: number }) => void;
     const pool = createPool({
