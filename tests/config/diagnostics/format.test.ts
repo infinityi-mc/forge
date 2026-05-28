@@ -75,4 +75,44 @@ describe("formatDiagnostics", () => {
     ]);
     expect(output).not.toContain("\u001b[");
   });
+
+  test("table never exceeds the requested width", () => {
+    for (const width of [60, 72, 80, 100, 120]) {
+      const output = formatDiagnostics(
+        [
+          {
+            path: "app.env",
+            envVar: "APP_ENV",
+            status: "missing",
+            reason:
+              "Must be one of: alpha, beta, gamma, delta, epsilon — a very long reason that forces wrapping.",
+          },
+          {
+            path: "db.url",
+            envVar: "DB_URL",
+            status: "invalid",
+            reason: "Invalid URL.",
+          },
+        ],
+        { width },
+      );
+      const boxLines = output
+        .split("\n")
+        .filter(
+          (l) =>
+            l.startsWith("\u250c") ||
+            l.startsWith("\u251c") ||
+            l.startsWith("\u2514") ||
+            l.startsWith("\u2502"),
+        );
+      for (const line of boxLines) {
+        // Visual width = code-point count (every char in the rendered
+        // table is single-column once the emoji-pad accounting in
+        // `padEndVisual` is applied). The renderer must respect the
+        // user-supplied budget.
+        const charLen = [...line].length;
+        expect(charLen).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });

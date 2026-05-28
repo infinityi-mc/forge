@@ -55,8 +55,8 @@ export function formatDiagnostics(
     visualWidth(COL_VAR),
     ...issues.map((i) => i.envVar.length),
   );
-  // 3 column separators (`│ … │ … │ … │`) + 4 spaces of padding.
-  const overhead = 3 + 2 * 3;
+  // 4 vertical bars (`│ … │ … │ … │`) + 6 padding spaces (2 per column).
+  const overhead = 4 + 2 * 3;
   const reasonWidth = Math.max(
     visualWidth(COL_REASON),
     width - varWidth - statusWidth - overhead,

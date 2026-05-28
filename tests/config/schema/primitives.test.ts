@@ -128,6 +128,22 @@ describe("t.url / t.url.secret()", () => {
       expect(JSON.stringify({ db: r.value })).toBe('{"db":"[REDACTED]"}');
     }
   });
+
+  test(".default(url).secret() wraps the carried-over default in Secret", () => {
+    const fallback = new URL("postgres://localhost/dev");
+    const leaf = t.url.default(fallback).secret();
+    expect(leaf.hasDefault).toBe(true);
+    expect(leaf.defaultValue).toBeInstanceOf(Secret);
+    const unwrapped = (leaf.defaultValue as Secret<URL>).unwrap();
+    expect(unwrapped).toBeInstanceOf(URL);
+    expect(unwrapped.toString()).toBe(fallback.toString());
+  });
+
+  test(".secret() with no default leaves defaultValue undefined", () => {
+    const leaf = t.url.secret();
+    expect(leaf.hasDefault).toBe(false);
+    expect(leaf.defaultValue).toBeUndefined();
+  });
 });
 
 describe("t.enum", () => {
@@ -211,5 +227,24 @@ describe("chainable methods", () => {
     expect(leaf.hasDefault).toBe(true);
     expect(leaf.defaultValue).toBe(42);
     expect(leaf.envName).toBe("MY_NUM");
+  });
+
+  test(".required() clones the leaf and clears isOptional", () => {
+    const optional = t.string.optional();
+    expect(optional.isOptional).toBe(true);
+    const required = optional.required();
+    expect(required.isOptional).toBe(false);
+    // The original leaf must not have been mutated — builder is immutable.
+    expect(optional.isOptional).toBe(true);
+    // Result is a distinct instance, not an aliased reference.
+    expect(required).not.toBe(optional);
+  });
+
+  test(".required() on an already-required leaf is a no-op clone", () => {
+    const a = t.string;
+    const b = a.required();
+    expect(b.isOptional).toBe(false);
+    expect(a.isOptional).toBe(false);
+    expect(b).not.toBe(a);
   });
 });

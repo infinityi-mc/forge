@@ -107,13 +107,15 @@ export abstract class Leaf<T> {
   }
 
   /**
-   * Explicit "must be present" marker. The default leaf behavior is
-   * already "fail if missing and no default"; `.required()` is offered
-   * for readability — callers can write `t.url.required()` to make
-   * intent unambiguous at the schema site.
+   * Explicit "must be present" marker. Clones the leaf and clears
+   * `isOptional`, so `.optional().required()` behaves as the chain
+   * reads — required wins. Most callers reach for it as a readability
+   * marker on a leaf that was already required.
    */
   required(): this {
-    return this;
+    const c = this._clone();
+    c.isOptional = false;
+    return c;
   }
 
   /**

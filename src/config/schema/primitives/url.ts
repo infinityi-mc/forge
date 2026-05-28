@@ -41,6 +41,12 @@ export class UrlLeaf extends Leaf<URL> {
     const c = new UrlSecretLeaf();
     this._copyBaseTo(c);
     c.isSecret = true;
+    // `_copyBaseTo` carries the `UrlLeaf` default verbatim — but the
+    // secret leaf is typed `Secret<URL>`. Wrap the default here so a
+    // downstream `.unwrap()` doesn't crash.
+    if (c.hasDefault) {
+      c.defaultValue = new Secret(c.defaultValue as unknown as URL);
+    }
     return c;
   }
 }
