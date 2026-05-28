@@ -155,6 +155,57 @@ describe("data pool", () => {
     await expect(drained).rejects.toBeInstanceOf(AggregateError);
   });
 
+  test("drain closes every idle resource even when one shutdown fails", async () => {
+    let secondClosed = false;
+    let created = 0;
+    const pool = createPool({
+      max: 2,
+      create: () => {
+        created += 1;
+        if (created === 1) {
+          return {
+            shutdown: async () => {
+              throw new Error("first close failed");
+            },
+          };
+        }
+        return {
+          shutdown: async () => {
+            secondClosed = true;
+          },
+        };
+      },
+    });
+
+    const first = await pool.acquire();
+    const second = await pool.acquire();
+    first.release();
+    second.release();
+
+    await expect(pool.drain()).rejects.toBeInstanceOf(AggregateError);
+    expect(secondClosed).toBe(true);
+    expect(pool.stats().total).toBe(0);
+  });
+
+  test("destructured shutdown still drains the pool", async () => {
+    let closed = false;
+    const pool = createPool({
+      max: 1,
+      create: () => ({
+        shutdown: () => {
+          closed = true;
+        },
+      }),
+    });
+
+    const lease = await pool.acquire();
+    lease.release();
+    const { shutdown } = pool;
+    await shutdown();
+
+    expect(closed).toBe(true);
+  });
+
   test("pre-warmed resources resolve queued waiters instead of idling", async () => {
     let resolveCreate!: (resource: { id: number }) => void;
     const pool = createPool({
@@ -214,5 +265,22 @@ describe("data pool", () => {
     resolveShutdown();
     await shutdown;
     expect(closed).toBe(true);
+  });
+
+  test("pre-warm creation failures are captured instead of becoming unhandled rejections", async () => {
+    const pool = createPool({
+      min: 1,
+      max: 1,
+      create: async () => {
+        throw new Error("create failed");
+      },
+    });
+
+    for (let index = 0; index < 5 && pool.stats().total !== 0; index += 1) {
+      await Promise.resolve();
+    }
+
+    await expect(pool.drain()).rejects.toBeInstanceOf(AggregateError);
+    expect(pool.stats().total).toBe(0);
   });
 });

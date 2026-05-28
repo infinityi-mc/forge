@@ -99,7 +99,7 @@ export function createPool<Resource extends PoolResource>(
     await resource.shutdown?.();
   }
 
-  function trackClose(resource: Resource): void {
+  function trackClose(resource: Resource): Promise<void> {
     const closing = closeResource(resource)
       .catch((cause) => {
         state.closeErrors.push(cause);
@@ -112,10 +112,20 @@ export function createPool<Resource extends PoolResource>(
         notifyDrainIfComplete();
       });
     state.closing.push(closing);
+    return closing;
+  }
+
+  function trackStarting(starting: Promise<void>): void {
+    const tracked = starting
+      .catch((cause) => {
+        state.closeErrors.push(cause);
+      })
+      .finally(() => untrackStarting(tracked));
+    state.starting.push(tracked);
   }
 
   function untrackStarting(starting: Promise<void>): void {
-    const index = state.starting.indexOf(starting);
+    const index = state.starting.findIndex((candidate) => candidate === starting);
     if (index >= 0) state.starting.splice(index, 1);
     notifyDrainIfComplete();
   }
@@ -153,9 +163,7 @@ export function createPool<Resource extends PoolResource>(
         const acquired = (async () => {
           const resource = await createResource();
           if (state.draining) {
-            await closeResource(resource);
-            state.total -= 1;
-            recordPoolGauges();
+            await trackClose(resource);
             throw new PoolError("Pool is draining");
           }
           state.active.add(resource);
@@ -207,9 +215,7 @@ export function createPool<Resource extends PoolResource>(
       }
       while (state.idle.length > 0) {
         const resource = state.idle.pop()!;
-        await closeResource(resource);
-        state.total -= 1;
-        recordPoolGauges();
+        trackClose(resource);
       }
       if (
         state.active.size === 0 &&
@@ -227,22 +233,20 @@ export function createPool<Resource extends PoolResource>(
     },
 
     async shutdown(): Promise<void> {
-      await this.drain();
+      await pool.drain();
     },
   };
 
   for (let index = 0; index < min; index += 1) {
     const starting = createResource().then(async (resource) => {
       if (state.draining) {
-        await closeResource(resource);
-        state.total -= 1;
+        await trackClose(resource);
       } else if (!resolveWaiter(resource)) {
         state.idle.push(resource);
         recordPoolGauges();
       }
-    }).finally(() => {
-    }).finally(() => untrackStarting(starting));
-    state.starting.push(starting);
+    });
+    trackStarting(starting);
   }
 
   return Object.freeze(pool);
