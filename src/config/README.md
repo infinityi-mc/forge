@@ -182,6 +182,25 @@ The `unwrap()` site is grep-able, which makes credential handling auditable. Dia
 
 ---
 
+## Immutability
+
+`defineConfig` deep-freezes its return value before handing it back. The **shape** of the tree is locked:
+
+```ts
+config.app = { …};                 // TypeError in strict mode
+delete (config as any).db;         // TypeError in strict mode
+config.app.port = 99;              // TypeError in strict mode
+```
+
+Two carve-outs exist because of how `Object.freeze` works in V8/JavaScriptCore — both are inherent limitations of the runtime, not bugs in `forge/config`:
+
+- **`URL` instances stay internally mutable.** A `URL`'s components live on accessor properties on `URL.prototype`, not own data properties, so `Object.freeze` cannot lock them. `config.db.url.pathname = "/x"` will still mutate the live `URL`. If you need a tamper-proof connection target, snapshot the string form (`config.db.url.toString()`) at the consumption site or wrap it in `t.url.secret()` so accidental logs redact rather than leak.
+- **`Secret`'s wrapped value stays in a private field.** `Object.freeze` cannot reach the `#value` slot. The `Secret` wrapper itself is frozen (no properties can be added), but the private slot is unreachable from outside the class anyway — `unwrap()` is the only way to read it, and there is no setter.
+
+For the boot-time fail-fast use case `forge/config` is built around, this is the right trade-off: the tree itself cannot be re-shaped mid-request, and `URL` / `Secret` semantics match what an application developer already expects from those types.
+
+---
+
 ## Bring-your-own source
 
 `ConfigSource` is a two-method interface — easy to implement for AWS SSM, HashiCorp Vault, GCP Secret Manager, or an in-memory fixture during tests:

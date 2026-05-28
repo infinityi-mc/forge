@@ -60,6 +60,22 @@ describe("setAtPath", () => {
     setAtPath(target, "a.added", 1);
     expect(target).toEqual({ a: { existing: true, added: 1 } });
   });
+
+  test("replaces a null intermediate instead of dereferencing it", () => {
+    // Regression: `typeof null === "object"`, so a pre-existing `null`
+    // at an intermediate slot used to skip the create-empty-object
+    // branch and crash the next iteration with `TypeError: Cannot set
+    // properties of null`.
+    const target: Record<string, unknown> = { a: null };
+    setAtPath(target, "a.b.c", 7);
+    expect(target).toEqual({ a: { b: { c: 7 } } });
+  });
+
+  test("replaces a non-object intermediate (e.g. a string) instead of indexing into it", () => {
+    const target: Record<string, unknown> = { a: "scalar" };
+    setAtPath(target, "a.b", 9);
+    expect(target).toEqual({ a: { b: 9 } });
+  });
 });
 
 describe("deepFreeze", () => {

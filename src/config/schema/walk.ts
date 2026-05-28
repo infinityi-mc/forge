@@ -93,7 +93,11 @@ export function setAtPath(
   for (let i = 0; i < segments.length - 1; i++) {
     const key = segments[i]!;
     const existing = cursor[key];
-    if (existing === undefined || typeof existing !== "object") {
+    // `existing == null` covers both `undefined` *and* `null`. Without the
+    // null check, a `null` intermediate slips past `typeof !== "object"`
+    // (because `typeof null === "object"`) and the next loop iteration
+    // dereferences `null`.
+    if (existing == null || typeof existing !== "object") {
       cursor[key] = {};
     }
     cursor = cursor[key] as Record<string, unknown>;
@@ -104,9 +108,24 @@ export function setAtPath(
 /**
  * Recursively `Object.freeze` an object and every nested object value.
  *
- * Arrays are frozen too. `Secret` instances are frozen so they can't
- * have additional properties slapped on. Primitives are passed through
- * unchanged.
+ * What this guarantees: the **shape** of the config tree is locked.
+ * `config.app = …`, `delete config.db`, and `config.app.port = 99` all
+ * throw in strict mode after `deepFreeze` returns.
+ *
+ * What this does **not** guarantee: native objects whose state lives
+ * on prototype accessors or in private fields remain internally
+ * mutable, because `Object.freeze` only locks an object's own data
+ * properties.
+ *
+ * - `URL`: mutation paths like `config.db.url.pathname = "/x"` still
+ *   take effect — `URL`'s slots are exposed via accessor properties
+ *   on `URL.prototype`, not own properties.
+ * - `Secret`: the wrapped value lives in a `#value` private field
+ *   that `Object.freeze` cannot reach. The wrapper itself is frozen
+ *   (no extra properties can be added), but the private slot is not
+ *   reassignable from outside the class regardless.
+ *
+ * Primitives are passed through unchanged.
  */
 export function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
