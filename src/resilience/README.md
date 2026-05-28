@@ -11,7 +11,7 @@ Most resilience libraries in the JS/TS ecosystem suffer from three problems: tim
 
 ---
 
-## Shipped today (PR A + PR B)
+## Shipped today (PR A + PR B + PR C)
 
 1. **Core contract** (`forge/resilience`) — `Policy`, `Pipeline`, `ExecutionContext`, `Operation`, `combine(...)`, no-throw `executeResult` + `Result<T, E>`, base errors `ResilienceError` / `TransientError` / `RateLimitError`.
 2. **`retry`** — `maxAttempts`, predicate-based `shouldRetry`, value-level `retryOn`, backoff strategies (`constantBackoff`, `linearBackoff`, `exponentialBackoff` with mandatory-by-default full jitter), injectable `clock`.
@@ -19,10 +19,9 @@ Most resilience libraries in the JS/TS ecosystem suffer from three problems: tim
 4. **`circuitBreaker`** — three-state breaker (closed / open / half-open), count- or time-based sliding window, ratio or absolute thresholds, `forceOpen()` / `forceClosed()` / `reset()` inspectors. Explicit instantiation: hold one per dependency or build a `Map` for per-tenant breakers.
 5. **`rateLimit`** — token-bucket (burst-friendly) and sliding-window (strict) algorithms, `throw` and `wait` modes, bounded waiter queue, abort-aware waits.
 6. **`bulkhead`** — concurrency-limiting semaphore with a bounded wait queue; `BulkheadFullError` when both slots and queue are saturated.
-7. **`forge/resilience/testing`** — deterministic `TestClock` (`tickAsync(ms)` resolves pending sleeps instantly) + `executionContext()` factory for unit tests.
-
-Upcoming:
-- **PR C** — `fallback`, `hedge` (speculative + cancellation), `STANDARD_RESILIENCE_SCENARIOS` conformance suite.
+7. **`fallback`** — substitute a secondary result when the primary fails; predicate-gated; preserves the original error on `cause`.
+8. **`hedge`** — fire speculative parallel attempts on a delay schedule. First to succeed wins; losers are aborted via their own `AbortSignal` so cooperating I/O actually cancels.
+9. **`forge/resilience/testing`** — deterministic `TestClock`, `executionContext()` / `createTestResilience()` factories, and `STANDARD_RESILIENCE_SCENARIOS` + `assertConformance(...)` so wrappers around the canonical policies stay drop-in compatible.
 
 ---
 
@@ -73,12 +72,24 @@ src/resilience/
 │   ├── errors.ts         # BulkheadFullError
 │   └── types.ts          # BulkheadOptions, BulkheadPolicy
 │
+├── fallback/
+│   ├── index.ts          # fallback
+│   ├── fallback.ts       # Policy
+│   └── types.ts          # FallbackOptions, FallbackPolicy, FallbackHandler
+│
+├── hedge/
+│   ├── index.ts          # hedge, HedgeCancelledError
+│   ├── hedge.ts          # Policy (speculative parallel attempts)
+│   ├── errors.ts         # HedgeCancelledError
+│   └── types.ts          # HedgeOptions, HedgePolicy
+│
 ├── telemetry/
 │   └── instrumentation.ts  # buildInstruments({ meter, tracer })
 │
 └── testing/
-    ├── index.ts          # TestClock, executionContext
-    └── clock.ts          # TestClock implementation
+    ├── index.ts          # TestClock, executionContext, createTestResilience
+    ├── clock.ts          # TestClock implementation
+    └── conformance.ts    # STANDARD_RESILIENCE_SCENARIOS, assertConformance
 ```
 
 ---
@@ -156,7 +167,47 @@ Emits:
 | `forge_resilience_circuit_state`      | gauge   |
 | `forge_resilience_bulkhead_queue_size`| gauge   |
 
-Plus span events `resilience.retry.attempt`, `resilience.timeout.triggered`, and `resilience.circuit.state_change`.
+Plus span events `resilience.retry.attempt`, `resilience.timeout.triggered`, `resilience.circuit.state_change`, `resilience.fallback.triggered`, and `resilience.hedge.attempt`.
+
+### Degrading gracefully with `fallback`
+
+```ts
+import { combine, fallback, retry, timeout } from "forge/resilience";
+
+const pipeline = combine(
+  fallback({
+    fallback: () => ({ items: [], stale: true }),
+    shouldFallback: (err) => !(err instanceof AuthError),
+  }),
+  retry({ maxAttempts: 3 }),
+  timeout({ ms: 2_000 }),
+);
+
+// On success: returns the live result. On failure: returns the stale
+// stub, with the original error preserved on `cause` if the fallback
+// itself throws.
+const data = await pipeline.execute(async (ctx) => {
+  const res = await fetch(url, { signal: ctx.signal });
+  return res.json();
+});
+```
+
+### Cutting tail latency with `hedge`
+
+```ts
+import { combine, hedge } from "forge/resilience";
+
+const pipeline = combine(
+  // Fire a second request 50ms after the first if it hasn't returned
+  // yet. Up to 3 attempts run concurrently. Losers are aborted via
+  // their own AbortSignal — pass it to fetch so the socket closes.
+  hedge({ delay: 50, maxHedgedAttempts: 3 }),
+);
+
+await pipeline.execute(async (ctx) => {
+  return fetch(url, { signal: ctx.signal });
+});
+```
 
 ### Testing deterministically
 
@@ -186,6 +237,23 @@ test("retries with exponential backoff", async () => {
 
   expect(await promise).toBe("ok");
 });
+```
+
+Verifying that a custom pipeline still satisfies the shared invariants:
+
+```ts
+import { combine, retry, timeout } from "forge/resilience";
+import {
+  STANDARD_RESILIENCE_SCENARIOS,
+  assertConformance,
+  createTestResilience,
+} from "forge/resilience/testing";
+
+const t = createTestResilience();
+await assertConformance(
+  () => combine(retry({ maxAttempts: 1, clock: t.clock }), timeout({ ms: 100, clock: t.clock })),
+  STANDARD_RESILIENCE_SCENARIOS,
+);
 ```
 
 ---

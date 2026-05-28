@@ -106,5 +106,22 @@ export {
   type BulkheadPolicy,
 } from "./bulkhead";
 
+// Fallback
+export {
+  fallback,
+  type FallbackHandler,
+  type FallbackOptions,
+  type FallbackPolicy,
+  type FallbackPredicate,
+} from "./fallback";
+
+// Hedge
+export {
+  HedgeCancelledError,
+  hedge,
+  type HedgeOptions,
+  type HedgePolicy,
+} from "./hedge";
+
 // Telemetry hook surface
 export type { ResilienceTelemetry } from "./telemetry/instrumentation";
