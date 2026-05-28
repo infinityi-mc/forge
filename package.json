@@ -146,6 +146,18 @@
     "./resilience/errors": {
       "import": "./dist/resilience/errors.js",
       "types": "./dist/resilience/errors.d.ts"
+    },
+    "./resilience/circuit-breaker": {
+      "import": "./dist/resilience/circuit-breaker/index.js",
+      "types": "./dist/resilience/circuit-breaker/index.d.ts"
+    },
+    "./resilience/rate-limit": {
+      "import": "./dist/resilience/rate-limit/index.js",
+      "types": "./dist/resilience/rate-limit/index.d.ts"
+    },
+    "./resilience/bulkhead": {
+      "import": "./dist/resilience/bulkhead/index.js",
+      "types": "./dist/resilience/bulkhead/index.d.ts"
     }
   },
   "devDependencies": {
@@ -155,7 +167,7 @@
     "typescript": "^6"
   },
   "scripts": {
-    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts --outdir dist --root src --splitting --target node",
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts src/resilience/circuit-breaker/index.ts src/resilience/rate-limit/index.ts src/resilience/bulkhead/index.ts --outdir dist --root src --splitting --target node",
     "check": "tsc --noEmit",
     "test": "bun test"
   }

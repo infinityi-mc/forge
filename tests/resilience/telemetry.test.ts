@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
+  bulkhead,
+  circuitBreaker,
   combine,
   exponentialBackoff,
+  RateLimitedError,
+  rateLimit,
   retry,
   timeout,
   TimeoutError,
 } from "../../src/resilience";
-import { TestClock } from "../../src/resilience/testing";
+import { TestClock, executionContext } from "../../src/resilience/testing";
 import { createTestTelemetry } from "../../src/telemetry/testing";
 
 describe("resilience telemetry integration", () => {
@@ -53,14 +57,14 @@ describe("resilience telemetry integration", () => {
       (m) => m.descriptor.name === "forge_resilience_attempts_total",
     );
     expect(attemptsCounter).toBeDefined();
-    expect(
-      (attemptsCounter!.points[0] as { value: number }).value,
-    ).toBe(3);
+    expect((attemptsCounter!.points[0] as { value: number }).value).toBe(3);
 
     // Span events surface as one-shot spans with no parent — but
     // they carry the configured event name as the span name in our
     // adapter implementation. Two span events fired (one per retry).
-    const retrySpans = t.spans.filter((s) => s.name === "resilience.retry.attempt");
+    const retrySpans = t.spans.filter(
+      (s) => s.name === "resilience.retry.attempt",
+    );
     expect(retrySpans).toHaveLength(2);
     expect(retrySpans[0]!.attributes["attempt_number"]).toBe(1);
     expect(retrySpans[1]!.attributes["attempt_number"]).toBe(2);
@@ -98,9 +102,7 @@ describe("resilience telemetry integration", () => {
       (m) => m.descriptor.name === "forge_resilience_timeout_total",
     );
     expect(timeouts).toBeDefined();
-    expect(
-      (timeouts!.points[0] as { value: number }).value,
-    ).toBe(1);
+    expect((timeouts!.points[0] as { value: number }).value).toBe(1);
 
     const triggered = t.spans.filter(
       (s) => s.name === "resilience.timeout.triggered",
@@ -114,5 +116,116 @@ describe("resilience telemetry integration", () => {
     const pipeline = combine(retry({ maxAttempts: 2 }));
     const result = await pipeline.execute(() => 7);
     expect(result).toBe(7);
+  });
+
+  test("circuitBreaker emits circuit_state gauge and state_change events", async () => {
+    const t = createTestTelemetry();
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 50,
+      telemetry: { meter: t.meter, tracer: t.tracer },
+      clock,
+    });
+
+    await breaker
+      .execute(() => {
+        throw new Error("boom");
+      }, executionContext())
+      .catch(() => {});
+    expect(breaker.state).toBe("open");
+
+    await t.flushAll();
+
+    const batch = t.batches[0]!;
+    const stateGauge = batch.metrics.find(
+      (m) => m.descriptor.name === "forge_resilience_circuit_state",
+    );
+    expect(stateGauge).toBeDefined();
+    // The last recorded state was "open" (=2).
+    const openPoint = stateGauge!.points.find(
+      (p) => (p.attributes as { state?: string }).state === "open",
+    );
+    expect(openPoint).toBeDefined();
+    expect((openPoint as { value: number }).value).toBe(2);
+
+    const stateChanges = t.spans.filter(
+      (s) => s.name === "resilience.circuit.state_change",
+    );
+    // One transition: closed → open.
+    expect(stateChanges.length).toBeGreaterThanOrEqual(1);
+    const last = stateChanges[stateChanges.length - 1]!;
+    expect(last.attributes["from_state"]).toBe("closed");
+    expect(last.attributes["to_state"]).toBe("open");
+  });
+
+  test("rateLimit attempts counter only counts admitted executions", async () => {
+    const t = createTestTelemetry();
+    const clock = new TestClock();
+    const limiter = rateLimit({
+      algorithm: { kind: "token-bucket", tokensPerSecond: 1, burst: 1 },
+      mode: "throw",
+      telemetry: { meter: t.meter, tracer: t.tracer },
+      clock,
+    });
+
+    let executed = 0;
+    expect(
+      await limiter.execute(() => {
+        executed++;
+        return "admitted";
+      }, executionContext()),
+    ).toBe("admitted");
+
+    const rejected = await limiter
+      .execute(() => {
+        executed++;
+        return "rejected";
+      }, executionContext())
+      .catch((e) => e);
+    expect(rejected).toBeInstanceOf(RateLimitedError);
+    expect(executed).toBe(1);
+
+    await t.flushAll();
+
+    const batch = t.batches[0]!;
+    const attempts = batch.metrics.find(
+      (m) => m.descriptor.name === "forge_resilience_attempts_total",
+    );
+    expect(attempts).toBeDefined();
+    expect((attempts!.points[0] as { value: number }).value).toBe(1);
+  });
+
+  test("bulkhead emits bulkhead_queue_size gauge", async () => {
+    const t = createTestTelemetry();
+    const bh = bulkhead({
+      maxConcurrent: 1,
+      maxQueue: 2,
+      telemetry: { meter: t.meter, tracer: t.tracer },
+    });
+
+    let release!: (v: string) => void;
+    const slow = new Promise<string>((r) => {
+      release = r;
+    });
+    const a = bh.execute(() => slow, executionContext());
+    await Promise.resolve();
+
+    // Queue one and let it park before releasing the first.
+    const b = bh.execute(() => "queued", executionContext());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    release("a");
+    expect(await a).toBe("a");
+    expect(await b).toBe("queued");
+
+    await t.flushAll();
+
+    const batch = t.batches[0]!;
+    const queueGauge = batch.metrics.find(
+      (m) => m.descriptor.name === "forge_resilience_bulkhead_queue_size",
+    );
+    expect(queueGauge).toBeDefined();
   });
 });

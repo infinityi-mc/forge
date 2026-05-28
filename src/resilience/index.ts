@@ -78,5 +78,33 @@ export {
   type TimeoutStrategy,
 } from "./timeout";
 
+// Circuit breaker
+export {
+  CircuitOpenError,
+  circuitBreaker,
+  type CircuitBreakerOptions,
+  type CircuitBreakerPolicy,
+  type CircuitState,
+  type CircuitWindow,
+} from "./circuit-breaker";
+
+// Rate limit
+export {
+  RateLimitedError,
+  rateLimit,
+  type RateLimitAlgorithm,
+  type RateLimitMode,
+  type RateLimitOptions,
+  type RateLimitPolicy,
+} from "./rate-limit";
+
+// Bulkhead
+export {
+  BulkheadFullError,
+  bulkhead,
+  type BulkheadOptions,
+  type BulkheadPolicy,
+} from "./bulkhead";
+
 // Telemetry hook surface
 export type { ResilienceTelemetry } from "./telemetry/instrumentation";

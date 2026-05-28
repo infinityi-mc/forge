@@ -11,15 +11,17 @@ Most resilience libraries in the JS/TS ecosystem suffer from three problems: tim
 
 ---
 
-## Shipped today (PR A)
+## Shipped today (PR A + PR B)
 
 1. **Core contract** (`forge/resilience`) — `Policy`, `Pipeline`, `ExecutionContext`, `Operation`, `combine(...)`, no-throw `executeResult` + `Result<T, E>`, base errors `ResilienceError` / `TransientError` / `RateLimitError`.
 2. **`retry`** — `maxAttempts`, predicate-based `shouldRetry`, value-level `retryOn`, backoff strategies (`constantBackoff`, `linearBackoff`, `exponentialBackoff` with mandatory-by-default full jitter), injectable `clock`.
 3. **`timeout`** — `optimistic` (default) and `pessimistic` strategies. Aborts a child `AbortController` linked to the operation so cooperating I/O actually cancels.
-4. **`forge/resilience/testing`** — deterministic `TestClock` (`tickAsync(ms)` resolves pending sleeps instantly) + `executionContext()` factory for unit tests.
+4. **`circuitBreaker`** — three-state breaker (closed / open / half-open), count- or time-based sliding window, ratio or absolute thresholds, `forceOpen()` / `forceClosed()` / `reset()` inspectors. Explicit instantiation: hold one per dependency or build a `Map` for per-tenant breakers.
+5. **`rateLimit`** — token-bucket (burst-friendly) and sliding-window (strict) algorithms, `throw` and `wait` modes, bounded waiter queue, abort-aware waits.
+6. **`bulkhead`** — concurrency-limiting semaphore with a bounded wait queue; `BulkheadFullError` when both slots and queue are saturated.
+7. **`forge/resilience/testing`** — deterministic `TestClock` (`tickAsync(ms)` resolves pending sleeps instantly) + `executionContext()` factory for unit tests.
 
 Upcoming:
-- **PR B** — `circuitBreaker`, `rateLimit`, `bulkhead`.
 - **PR C** — `fallback`, `hedge` (speculative + cancellation), `STANDARD_RESILIENCE_SCENARIOS` conformance suite.
 
 ---
@@ -48,6 +50,28 @@ src/resilience/
 │   ├── timeout.ts        # Implementation (child AbortController + Promise.race)
 │   ├── errors.ts         # TimeoutError
 │   └── types.ts          # TimeoutOptions, TimeoutPolicy, TimeoutStrategy
+│
+├── circuit-breaker/
+│   ├── index.ts          # circuitBreaker, CircuitOpenError
+│   ├── breaker.ts        # CLOSED / OPEN / HALF_OPEN state machine
+│   ├── sliding-window.ts # count- and time-based windows
+│   ├── errors.ts         # CircuitOpenError
+│   └── types.ts          # CircuitBreakerOptions, CircuitBreakerPolicy, CircuitState
+│
+├── rate-limit/
+│   ├── index.ts          # rateLimit, RateLimitedError
+│   ├── rate-limit.ts     # Policy + queueing
+│   ├── token-bucket.ts   # Burst-friendly admission
+│   ├── sliding-window.ts # Strict rolling-window admission
+│   ├── errors.ts         # RateLimitedError
+│   └── types.ts          # RateLimitOptions, RateLimitPolicy, RateLimitMode
+│
+├── bulkhead/
+│   ├── index.ts          # bulkhead, BulkheadFullError
+│   ├── bulkhead.ts       # Policy
+│   ├── semaphore.ts      # Bounded async semaphore + wait queue
+│   ├── errors.ts         # BulkheadFullError
+│   └── types.ts          # BulkheadOptions, BulkheadPolicy
 │
 ├── telemetry/
 │   └── instrumentation.ts  # buildInstruments({ meter, tracer })
@@ -124,13 +148,15 @@ const pipeline = combine(
 
 Emits:
 
-| Metric                              | Type    |
-| :---------------------------------- | :------ |
-| `forge_resilience_attempts_total`   | counter |
-| `forge_resilience_retries_total`    | counter |
-| `forge_resilience_timeout_total`    | counter |
+| Metric                                | Type    |
+| :------------------------------------ | :------ |
+| `forge_resilience_attempts_total`     | counter |
+| `forge_resilience_retries_total`      | counter |
+| `forge_resilience_timeout_total`      | counter |
+| `forge_resilience_circuit_state`      | gauge   |
+| `forge_resilience_bulkhead_queue_size`| gauge   |
 
-Plus span events `resilience.retry.attempt` and `resilience.timeout.triggered`.
+Plus span events `resilience.retry.attempt`, `resilience.timeout.triggered`, and `resilience.circuit.state_change`.
 
 ### Testing deterministically
 
