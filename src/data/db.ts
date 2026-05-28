@@ -53,7 +53,7 @@ export function createDb<Schema extends DatabaseSchema>(
     },
 
     raw<Row = unknown>(query: SqlFragment): RawQueryBuilder<Row> {
-      return new ExecutableQuery<Row>(handleAny, () => compileRaw(query));
+      return new ExecutableQuery<Row>(handleAny, () => compileRaw(options.dialect, query));
     },
 
     async execute<Row = unknown>(query: CompiledQuery): Promise<QueryResult<Row>> {
@@ -85,6 +85,7 @@ function normalizeResult<Row>(
   result: QueryResult<Row>,
 ): QueryResult<Row> {
   if (result.rows.length > 0) return result;
+  if (query.returning) return result;
   if (query.kind === "update") {
     return {
       rows: [{ numUpdatedRows: result.numAffectedRows } as Row],

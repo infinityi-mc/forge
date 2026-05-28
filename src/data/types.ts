@@ -62,6 +62,7 @@ export interface CompiledQuery {
   readonly sql: string;
   readonly params: readonly unknown[];
   readonly kind: QueryKind;
+  readonly returning: boolean;
 }
 
 export type QueryKind = "select" | "insert" | "update" | "delete" | "raw";

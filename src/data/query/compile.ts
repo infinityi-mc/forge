@@ -15,8 +15,13 @@ export function compileNode(dialect: Dialect, node: QueryNode): CompiledQuery {
   }
 }
 
-export function compileRaw(query: SqlFragment): CompiledQuery {
-  return { sql: query.text, params: query.params, kind: "raw" };
+export function compileRaw(dialect: Dialect, query: SqlFragment): CompiledQuery {
+  return {
+    sql: rewriteParameterPlaceholders(dialect, query.text, query.params.length),
+    params: query.params,
+    kind: "raw",
+    returning: /\breturning\b/i.test(query.text),
+  };
 }
 
 function compileSelect(dialect: Dialect, node: SelectNode): CompiledQuery {
@@ -37,7 +42,7 @@ function compileSelect(dialect: Dialect, node: SelectNode): CompiledQuery {
     parts.push(`limit ${dialect.placeholder(params.length)}`);
   }
 
-  return { sql: parts.join(" "), params, kind: "select" };
+  return { sql: parts.join(" "), params, kind: "select", returning: false };
 }
 
 function compileInsert(dialect: Dialect, node: InsertNode): CompiledQuery {
@@ -66,7 +71,7 @@ function compileInsert(dialect: Dialect, node: InsertNode): CompiledQuery {
     `insert into ${dialect.quoteIdentifier(node.table)} (${columnSql}) values ${valuesSql}`,
   ];
   appendReturning(dialect, parts, node.returning);
-  return { sql: parts.join(" "), params, kind: "insert" };
+  return { sql: parts.join(" "), params, kind: "insert", returning: node.returning !== undefined };
 }
 
 function compileUpdate(dialect: Dialect, node: UpdateNode): CompiledQuery {
@@ -85,7 +90,7 @@ function compileUpdate(dialect: Dialect, node: UpdateNode): CompiledQuery {
   ];
   appendWhere(dialect, parts, params, node.where);
   appendReturning(dialect, parts, node.returning);
-  return { sql: parts.join(" "), params, kind: "update" };
+  return { sql: parts.join(" "), params, kind: "update", returning: node.returning !== undefined };
 }
 
 function compileDelete(dialect: Dialect, node: DeleteNode): CompiledQuery {
@@ -93,7 +98,7 @@ function compileDelete(dialect: Dialect, node: DeleteNode): CompiledQuery {
   const parts = [`delete from ${dialect.quoteIdentifier(node.table)}`];
   appendWhere(dialect, parts, params, node.where);
   appendReturning(dialect, parts, node.returning);
-  return { sql: parts.join(" "), params, kind: "delete" };
+  return { sql: parts.join(" "), params, kind: "delete", returning: node.returning !== undefined };
 }
 
 function appendWhere(
@@ -123,4 +128,18 @@ function compileColumns(dialect: Dialect, columns: readonly string[] | "*"): str
   if (columns === "*") return "*";
   if (columns.length === 0) return "*";
   return columns.map((column) => dialect.quoteIdentifier(column)).join(", ");
+}
+
+function rewriteParameterPlaceholders(
+  dialect: Dialect,
+  text: string,
+  paramCount: number,
+): string {
+  if (paramCount === 0) return text;
+
+  let next = 0;
+  return text.replaceAll("?", () => {
+    next += 1;
+    return next <= paramCount ? dialect.placeholder(next) : "?";
+  });
 }

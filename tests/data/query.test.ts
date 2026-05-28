@@ -56,6 +56,18 @@ describe("query builders", () => {
     expect(query.params).toEqual(["active", 10]);
   });
 
+  test("compiles returning queries with explicit returning metadata", () => {
+    const db = createTestDb();
+    const query = db
+      .deleteFrom("users")
+      .where("id", "=", 999)
+      .returning(["id"] as const)
+      .compile();
+
+    expect(query.returning).toBe(true);
+    expect(query.sql).toBe('delete from "users" where "id" = ? returning "id"');
+  });
+
   test("executes select, insert returning, update, and delete through SQLite", async () => {
     const db = createTestDb();
     await seed(db);
@@ -95,6 +107,30 @@ describe("query builders", () => {
       .executeTakeFirstOrThrow();
 
     expect(deleted.numDeletedRows).toBe(2n);
+
+    await db.shutdown();
+  });
+
+  test("returning update/delete that match zero rows return an empty result, not synthetic count rows", async () => {
+    const db = createTestDb();
+    await seed(db);
+
+    const updated = await db
+      .updateTable("users")
+      .set({ status: "disabled" })
+      .where("id", "=", 999)
+      .returning(["id"] as const)
+      .execute();
+
+    expect(updated.rows).toEqual([]);
+
+    const deleted = await db
+      .deleteFrom("users")
+      .where("id", "=", 999)
+      .returning(["id"] as const)
+      .execute();
+
+    expect(deleted.rows).toEqual([]);
 
     await db.shutdown();
   });
