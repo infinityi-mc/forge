@@ -17,6 +17,16 @@ an explicit database handle.
 - `DataError` taxonomy with query, pool, transaction, migration,
   concurrency, and tenant categories.
 
+## Shipped in PR B
+
+- `createPool` for bounded acquire/release, waiter timeouts, drain, and
+  shutdown.
+- `forge/data/dialects/postgres` with PostgreSQL SQL compilation and a
+  peer-client driver adapter.
+- `db.ping()` health hook.
+- Optional query tracing and query/pool metrics through injected
+  `forge/telemetry` meter/tracer handles.
+
 ## Quick Start
 
 ```ts
