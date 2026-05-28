@@ -1,5 +1,5 @@
 /**
- * `defineConfig` — the top-level loader.
+ * `defineConfig` — the top-level boot-time loader.
  *
  * Pipeline:
  *
@@ -8,31 +8,29 @@
  * 2. Build the source stack — `.env` (disabled in production), env, CLI —
  *    queried highest-priority-first per leaf. Callers may override the
  *    stack entirely via `options.sources`.
- * 3. Walk the schema once, collecting one entry per leaf.
- * 4. For each leaf, query the source stack; fall back to the leaf's
- *    declared default; report `missing` only when no source hits and
- *    the leaf is neither optional nor defaulted.
- * 5. Parse the raw value through the leaf; collect every error before
- *    failing fast — boot diagnostics aggregate, never short-circuit.
- * 6. On failure: render the diagnostic table to stderr and `exit(1)`
+ * 3. Walk the schema once via {@link validateSnapshot}; aggregate every
+ *    issue before failing — boot diagnostics never short-circuit on
+ *    the first error.
+ * 4. On failure: render the diagnostic table to stderr and `exit(1)`
  *    (or throw a {@link ConfigValidationError} when
  *    `throwOnError: true`).
- * 7. On success: assemble the typed tree, deep-freeze it, return.
+ * 5. On success: deep-freeze the result, emit the optional boot
+ *    summary, and return the typed tree.
  *
  * @module
  */
 
-import {
-  type ConfigDiagnostic,
-  ConfigValidationError,
-} from "./errors";
 import { writeFailFast } from "./diagnostics";
-import { collectLeaves, deepFreeze, setAtPath } from "./schema/walk";
+import { ConfigValidationError } from "./errors";
+import type { Logger } from "./logger";
+import { emitBootSummary } from "./observability";
+import { deepFreeze } from "./schema/walk";
 import { cliSource } from "./sources/cli";
 import { dotenvSource } from "./sources/dotenv";
 import { envSource } from "./sources/env";
 import type { ConfigSource, SourceLookup } from "./sources/types";
 import type { ConfigSchema, Infer } from "./types";
+import { validateSnapshot } from "./validate";
 
 export interface DefineConfigOptions {
   /**
@@ -66,6 +64,14 @@ export interface DefineConfigOptions {
     color?: boolean;
     width?: number;
   };
+  /**
+   * Optional structured logger. When supplied, `defineConfig` emits a
+   * single boot-summary line on success — `module`, `boot_time_ms`,
+   * `sources`, `loaded_keys`, `redacted_keys`. Values are never
+   * included. The logger is structurally typed so `forge/config`
+   * stays free of a hard `forge/telemetry/log` dependency.
+   */
+  logger?: Logger;
 }
 
 /**
@@ -86,51 +92,17 @@ export function defineConfig<S extends ConfigSchema>(
   schema: S,
   options: DefineConfigOptions = {},
 ): Infer<S> {
+  const startedAt = performance.now();
   const environment = resolveEnvironment(options);
   const sources = options.sources ?? defaultSources(environment);
 
-  const leaves = collectLeaves(schema);
-  const issues: ConfigDiagnostic[] = [];
-  const tree: Record<string, unknown> = {};
-
-  for (const entry of leaves) {
-    const lookup: SourceLookup = { path: entry.path, envVar: entry.envVar };
-    const raw = readFromSources(sources, lookup);
-
-    if (raw === undefined) {
-      if (entry.leaf.hasDefault) {
-        setAtPath(tree, entry.path, entry.leaf.defaultValue);
-        continue;
-      }
-      if (entry.leaf.isOptional) {
-        // Optional leaves are present-but-undefined in the result
-        // tree so consumers can use `?.` consistently.
-        setAtPath(tree, entry.path, undefined);
-        continue;
-      }
-      issues.push({
-        path: entry.path,
-        envVar: entry.envVar,
-        status: "missing",
-        reason: missingReason(entry.leaf),
-      });
-      continue;
-    }
-
-    const parsed = entry.leaf.parse(raw);
-    if (parsed.ok) {
-      setAtPath(tree, entry.path, parsed.value);
-    } else {
-      issues.push({
-        path: entry.path,
-        envVar: entry.envVar,
-        status: "invalid",
-        reason: parsed.reason,
-        // Never echo secret values into diagnostics.
-        ...(entry.leaf.isSecret ? {} : { received: raw }),
-      });
-    }
-  }
+  const { tree, issues, loadedKeys, redactedKeys } = validateSnapshot(
+    schema,
+    (entry) => {
+      const lookup: SourceLookup = { path: entry.path, envVar: entry.envVar };
+      return readFromSources(sources, lookup);
+    },
+  );
 
   if (issues.length > 0) {
     if (options.throwOnError === true) {
@@ -142,7 +114,18 @@ export function defineConfig<S extends ConfigSchema>(
     writeFailFast(issues, options.diagnostics ?? {});
   }
 
-  return deepFreeze(tree) as Infer<S>;
+  const frozen = deepFreeze(tree);
+
+  if (options.logger !== undefined) {
+    emitBootSummary(options.logger, {
+      bootTimeMs: Math.round(performance.now() - startedAt),
+      sources: sources.map((s) => s.name),
+      loadedKeys,
+      redactedKeys,
+    });
+  }
+
+  return frozen;
 }
 
 /**
@@ -191,14 +174,4 @@ function readFromSources(
     if (value !== undefined) return value;
   }
   return undefined;
-}
-
-function missingReason(leaf: import("./schema/types").Leaf<unknown>): string {
-  // Enum leaves get a tailored "Must be one of …" message — matches
-  // the spec example.
-  const variants = (leaf as { variants?: readonly string[] }).variants;
-  if (Array.isArray(variants) && variants.length > 0) {
-    return `Must be one of: ${variants.join(", ")}.`;
-  }
-  return `Required ${leaf.kind} value is missing.`;
 }

@@ -119,6 +119,31 @@ export class ConfigSecretAccessError extends ConfigError {
 }
 
 /**
+ * A {@link DynamicConfigProvider} failed during fetch / subscribe /
+ * shutdown, or an `onChange` callback threw. By default these errors
+ * are caught and surfaced through the optional logger; passing
+ * `propagateProviderErrors: true` to `defineDynamicConfig` raises
+ * this class to the caller instead.
+ */
+export class ConfigProviderError extends ConfigError {
+  readonly provider: string;
+  readonly phase: "initial-load" | "update" | "on-change" | "subscribe";
+
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      provider: string;
+      phase: "initial-load" | "update" | "on-change" | "subscribe";
+    },
+  ) {
+    super(message, options);
+    this.name = "ConfigProviderError";
+    this.provider = options.provider;
+    this.phase = options.phase;
+  }
+}
+
+/**
  * A mutation was attempted on the frozen configuration object. The
  * standard JS engine throws `TypeError` in strict mode — this class
  * is exported for symmetry with the rest of the taxonomy and is

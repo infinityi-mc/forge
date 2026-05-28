@@ -36,6 +36,24 @@
 export { defineConfig, defaultSources } from "./define";
 export type { DefineConfigOptions } from "./define";
 
+export {
+  defineDynamicConfig,
+  diff,
+} from "./dynamic";
+export type {
+  DefineDynamicConfigOptions,
+  DynamicConfigHandle,
+} from "./dynamic";
+
+export { pollingProvider, staticProvider } from "./providers";
+export type {
+  DynamicConfigProvider,
+  DynamicConfigSnapshot,
+  DynamicSnapshotHandler,
+  PollingProviderOptions,
+  StaticProviderOptions,
+} from "./providers";
+
 export { Secret, isSecret } from "./secret";
 
 export { t } from "./schema/builder";
@@ -43,6 +61,7 @@ export { t } from "./schema/builder";
 export {
   ConfigError,
   ConfigFrozenError,
+  ConfigProviderError,
   ConfigSchemaError,
   ConfigSecretAccessError,
   ConfigSourceError,
@@ -64,5 +83,7 @@ export type {
   FormatDiagnosticsOptions,
   WriteFailFastOptions,
 } from "./diagnostics";
+
+export type { Logger, LogAttributes } from "./logger";
 
 export type { ConfigSchema, Infer, Leaf } from "./types";
