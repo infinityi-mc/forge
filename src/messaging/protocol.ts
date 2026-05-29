@@ -45,8 +45,22 @@ export function toMessage<T = unknown>(
   delivery: TransportDelivery,
   codec: Codec,
 ): Message<T> {
+  const payload = codec.decode(delivery.record.body) as T;
+  return envelopeOf(delivery, payload);
+}
+
+/**
+ * Build a {@link Message} envelope from a delivery and an
+ * already-resolved payload. Strips reserved headers and resolves
+ * `occurredAt`. Used by {@link toMessage} and, on the consume path, to
+ * describe a message whose body could not be decoded (`payload`
+ * `undefined`) so a poison message can still be dead-lettered.
+ */
+export function envelopeOf<T = unknown>(
+  delivery: TransportDelivery,
+  payload: T,
+): Message<T> {
   const { record, attempt } = delivery;
-  const payload = codec.decode(record.body) as T;
 
   const occurredHeader = record.headers[OCCURRED_AT_HEADER];
   const parsed = occurredHeader ? new Date(occurredHeader) : undefined;

@@ -187,8 +187,8 @@ export interface MessageConsumer {
  * Options for {@link createConsumer}.
  *
  * PR A delivers at-least-once consumption with bounded concurrency.
- * Idempotency (`inbox`), bounded retry, and dead-lettering arrive in
- * PR B.
+ * PR B layers on idempotency ({@link inbox}), bounded {@link retry},
+ * and dead-lettering ({@link deadLetter}).
  */
 export interface ConsumerOptions {
   /** The broker adapter to receive from. */
@@ -201,10 +201,127 @@ export interface ConsumerOptions {
   readonly codec?: Codec;
   /** Max in-flight handlers. Default 1. */
   readonly concurrency?: number;
+  /**
+   * Idempotent consumption. When set, the consumer claims each message
+   * through the store before invoking the handler and skips duplicates
+   * (effective exactly-once = at-least-once delivery + dedup).
+   */
+  readonly inbox?: InboxStore;
+  /**
+   * How long an in-flight inbox claim stays valid before it may be
+   * reclaimed. Useful for durable stores so crash-orphaned claims do
+   * not block transport redelivery forever. Omit for no claim expiry.
+   */
+  readonly inboxClaimTtlMs?: number;
+  /** Derives the dedup key for a message. Default: `m.id`. */
+  readonly idempotencyKey?: (message: Message) => string;
+  /**
+   * Bounded in-process retry around the handler, consumed
+   * **structurally** from `forge/resilience`. Accepts a `retry(...)`
+   * policy or a `combine(...)` pipeline. On exhaustion the message is
+   * dead-lettered (if {@link deadLetter} is set) or nacked for
+   * transport redelivery.
+   */
+  readonly retry?: RetryPolicyLike;
+  /** Where messages land after retries are exhausted. */
+  readonly deadLetter?: DeadLetterStore;
   /** Opt-in metrics + traces. */
   readonly telemetry?: MessagingTelemetry;
   /** Opt-in structured logging. */
   readonly logger?: Logger;
+  /** Injectable clock (inbox TTL, timestamps). Defaults to the system clock. */
+  readonly clock?: Clock;
+}
+
+/**
+ * Idempotency store backing duplicate suppression for a
+ * {@link MessageConsumer}. The in-memory implementation doubles as the
+ * test double; `sqliteInboxStore` adds durability.
+ */
+export interface InboxStore {
+  /**
+   * Atomically record that `key` is being processed. Returns:
+   * - `"new"` — the caller holds the claim and should run the handler;
+   * - `"duplicate"` — already processed; the caller should skip;
+   * - `"in-flight"` — another worker holds an unexpired claim; the
+   *   transport should redeliver later.
+   */
+  begin(key: string, opts?: { ttlMs?: number }): Promise<InboxState>;
+  /** Mark the key done so future redeliveries are dropped as duplicates. */
+  commit(key: string): Promise<void>;
+  /** Release the claim so the message can be processed again. */
+  release(key: string): Promise<void>;
+}
+
+/** Outcome of {@link InboxStore.begin}. */
+export type InboxState = "new" | "duplicate" | "in-flight";
+
+/**
+ * Store for poison messages that exhausted their retries. The in-memory
+ * implementation doubles as the test double; `sqliteDeadLetterStore`
+ * adds durability.
+ */
+export interface DeadLetterStore {
+  /** Persist a dead-lettered message. */
+  store(entry: DeadLetterEntry): Promise<void>;
+  /** List dead-lettered messages, newest first. */
+  list(opts?: { limit?: number }): Promise<readonly DeadLetterEntry[]>;
+  /** Re-publish a dead-lettered message back to its source topic. */
+  redrive(id: string, bus: MessageBus): Promise<void>;
+  /** Drop a dead-lettered message. */
+  remove(id: string): Promise<void>;
+}
+
+/** A single record in a {@link DeadLetterStore}. */
+export interface DeadLetterEntry {
+  /** The message that could not be processed. */
+  readonly message: Message;
+  /** The topic the consumer was subscribed to. */
+  readonly topic: string;
+  /** A serialized snapshot of the failing error. */
+  readonly error: { name: string; message: string; stack?: string };
+  /** How many handler attempts were made before giving up. */
+  readonly attempts: number;
+  /** When the message was dead-lettered. */
+  readonly failedAt: Date;
+}
+
+/**
+ * Execution context handed to the operation a {@link RetryPolicyLike}
+ * runs. A structural subset of `forge/resilience`'s `ExecutionContext`.
+ */
+export interface RetryExecutionContext {
+  /** Aborted by the policy (e.g. a composed `timeout`) or the caller. */
+  readonly signal: AbortSignal;
+  /** 1-based attempt counter; incremented on each retry. */
+  readonly attempt: number;
+}
+
+/** The unit of work a {@link RetryPolicyLike} runs. */
+export type RetryOperation<T> = (
+  ctx: RetryExecutionContext,
+) => Promise<T> | T;
+
+/**
+ * Structural slice of a `forge/resilience` retry policy / pipeline.
+ * Both `retry(...)` (a policy) and `combine(...)` (a pipeline) satisfy
+ * it, so consumers can pass either without `forge/messaging` importing
+ * `forge/resilience`.
+ */
+export interface RetryPolicyLike {
+  execute<T>(
+    operation: RetryOperation<T>,
+    ctx: RetryExecutionContext,
+  ): Promise<T>;
+}
+
+/**
+ * Monotonic clock used for inbox TTLs and timestamps. Structurally
+ * compatible with `forge/resilience`'s `Clock`; tests inject a fake.
+ */
+export interface Clock {
+  /** Current wall-clock millisecond timestamp. */
+  now(): number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -224,6 +341,11 @@ export interface HistogramLike {
   record(value: number, attributes?: Attributes): void;
 }
 
+/** A bi-directional counter — structurally compatible with `forge/telemetry`. */
+export interface UpDownCounterLike {
+  add(value: number, attributes?: Attributes): void;
+}
+
 /** The slice of a meter `forge/messaging` uses. */
 export interface MeterLike {
   createCounter(
@@ -234,6 +356,15 @@ export interface MeterLike {
     name: string,
     options?: { description?: string; unit?: string },
   ): HistogramLike;
+  /**
+   * Optional: only used for `messaging.deadletter.size`. When a meter
+   * does not provide it the gauge silently no-ops, so the existing
+   * `MeterLike` shape stays backward-compatible.
+   */
+  createUpDownCounter?(
+    name: string,
+    options?: { description?: string; unit?: string },
+  ): UpDownCounterLike;
 }
 
 /** A span — structurally compatible with `forge/telemetry`. */

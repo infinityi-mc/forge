@@ -9,21 +9,57 @@
  * - Headers set by the producer reach the consumer.
  * - Delivery is at-least-once: a nacked message (a handler that throws
  *   on its first delivery) is redelivered and eventually handled.
+ * - An {@link InboxStore} makes consumption idempotent: a duplicate
+ *   delivery (same id) runs the handler only once.
+ * - A handler that always fails lands in a {@link DeadLetterStore} once
+ *   its bounded retries are exhausted — and can be redriven back to its
+ *   source topic.
  *
  * Each scenario receives a {@link TransportFactory} that returns a fresh
  * transport, so scenarios never share state. Errors are plain `Error`s,
  * keeping the suite framework-agnostic — run it from `bun:test` or any
  * other runner.
  *
- * Idempotency and dead-letter scenarios are added alongside the PR B
- * features they verify.
- *
  * @module
  */
 
 import { createMessageBus } from "../bus";
 import { createConsumer } from "../consumer";
-import type { Message, MessageConsumer, Transport } from "../types";
+import { inMemoryDeadLetterStore } from "../deadletter";
+import { inMemoryInboxStore } from "../inbox";
+import type {
+  Message,
+  MessageConsumer,
+  RetryExecutionContext,
+  RetryOperation,
+  RetryPolicyLike,
+  Transport,
+} from "../types";
+
+/**
+ * A minimal {@link RetryPolicyLike} that runs the operation up to
+ * `maxAttempts` times. Kept local so the conformance suite stays
+ * decoupled from `forge/resilience` — production code passes a real
+ * `retry(...)` / `combine(...)` instead.
+ */
+function fixedAttempts(maxAttempts: number): RetryPolicyLike {
+  return {
+    async execute<T>(
+      operation: RetryOperation<T>,
+      ctx: RetryExecutionContext,
+    ): Promise<T> {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await operation({ signal: ctx.signal, attempt });
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
+    },
+  };
+}
 
 /** Returns a fresh {@link Transport} for each scenario run. */
 export type TransportFactory = () => Transport | Promise<Transport>;
@@ -40,12 +76,12 @@ function assert(condition: unknown, message: string): asserts condition {
 
 /** Resolve once `predicate` is true or throw after `timeoutMs`. */
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   message: string,
   timeoutMs = 1_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) throw new Error(`Timed out waiting for: ${message}`);
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -148,6 +184,121 @@ export const STANDARD_MESSAGING_SCENARIOS: readonly MessagingConformanceScenario
       });
 
       assert(attempts >= 2, "expected the message to be redelivered");
+      await bus.shutdown();
+    },
+  },
+  {
+    name: "dedups a duplicate delivery through an inbox store",
+    async run(factory) {
+      const transport = await factory();
+      const bus = createMessageBus({ transport });
+      let handled = 0;
+      const consumer = createConsumer({
+        transport,
+        topic: "conformance.idempotent",
+        inbox: inMemoryInboxStore(),
+        handler: () => {
+          handled += 1;
+        },
+      });
+
+      await withConsumer(consumer, async () => {
+        // Same id twice: the second delivery must be suppressed.
+        await bus.publish({
+          type: "conformance.idempotent",
+          payload: { n: 1 },
+          id: "dup-1",
+        });
+        await waitFor(() => handled === 1, "first delivery handled");
+        await bus.publish({
+          type: "conformance.idempotent",
+          payload: { n: 1 },
+          id: "dup-1",
+        });
+        // Give a (wrongful) second invocation a chance to occur.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      assert(handled === 1, "handler ran exactly once for a duplicate id");
+      await bus.shutdown();
+    },
+  },
+  {
+    name: "dead-letters a message once its retries are exhausted",
+    async run(factory) {
+      const transport = await factory();
+      const bus = createMessageBus({ transport });
+      const deadLetter = inMemoryDeadLetterStore();
+      let attempts = 0;
+      const consumer = createConsumer({
+        transport,
+        topic: "conformance.dlq",
+        retry: fixedAttempts(3),
+        deadLetter,
+        handler: () => {
+          attempts += 1;
+          throw new Error("always fails");
+        },
+      });
+
+      let parked: readonly Message[] = [];
+      await withConsumer(consumer, async () => {
+        await bus.publish({
+          type: "conformance.dlq",
+          payload: { id: "poison-1" },
+          id: "poison-1",
+        });
+        await waitFor(async () => {
+          const list = await deadLetter.list();
+          return list.length === 1;
+        }, "message lands in the DLQ");
+        parked = (await deadLetter.list()).map((e) => e.message);
+      });
+
+      assert(attempts === 3, "handler ran for every bounded attempt");
+      assert(parked.length === 1, "exactly one message dead-lettered");
+      assert(parked[0]?.id === "poison-1", "the failing message was parked");
+      await bus.shutdown();
+    },
+  },
+  {
+    name: "redrives a dead-lettered message back to its source topic",
+    async run(factory) {
+      const transport = await factory();
+      const bus = createMessageBus({ transport });
+      const deadLetter = inMemoryDeadLetterStore();
+      let attempts = 0;
+      const consumer = createConsumer({
+        transport,
+        topic: "conformance.redrive",
+        retry: fixedAttempts(1),
+        deadLetter,
+        handler: () => {
+          attempts += 1;
+          throw new Error("always fails");
+        },
+      });
+
+      await withConsumer(consumer, async () => {
+        await bus.publish({
+          type: "conformance.redrive",
+          payload: {},
+          id: "redrive-1",
+        });
+        await waitFor(async () => (await deadLetter.list()).length === 1, "initial DLQ");
+        const attemptsBeforeRedrive = attempts;
+
+        await deadLetter.redrive("redrive-1", bus);
+        await waitFor(
+          () => attempts > attemptsBeforeRedrive,
+          "handler re-invoked after redrive",
+        );
+        assert(
+          attempts > attemptsBeforeRedrive,
+          "redrive re-published to the source topic",
+        );
+      });
+
       await bus.shutdown();
     },
   },

@@ -61,7 +61,7 @@ function matches(topic: string, type: string): boolean {
 /** Create an in-process {@link Transport}. */
 export function inMemoryTransport(
   options: InMemoryTransportOptions = {},
-): Transport {
+): Transport & { shutdown(): Promise<void> } {
   const name = options.name ?? "memory";
   const maxDeliveries = Math.max(1, options.maxDeliveries ?? 16);
   const logger = options.logger ?? NOOP_LOGGER;
