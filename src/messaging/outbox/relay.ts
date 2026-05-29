@@ -99,7 +99,7 @@ export function createOutboxRelay(options: OutboxRelayOptions): OutboxRelay {
   let wakeTimer: ReturnType<typeof setTimeout> | undefined;
   let wakeResolve: (() => void) | undefined;
   let reportedPending = 0;
-  const controller = new AbortController();
+  let controller = new AbortController();
 
   const run = async <Row = unknown>(
     text: string,
@@ -256,6 +256,7 @@ export function createOutboxRelay(options: OutboxRelayOptions): OutboxRelay {
       if (running) return;
       running = true;
       stopped = false;
+      controller = new AbortController();
       await ensureSchema();
       loop = pollForever();
     },

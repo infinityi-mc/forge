@@ -9,7 +9,7 @@ import {
   InMemoryMessageBus,
   assertOutboxRelayConformance,
 } from "../../src/messaging/testing";
-import type { Attributes, MeterLike } from "../../src/messaging";
+import type { Attributes, MeterLike, RetryPolicyLike } from "../../src/messaging";
 
 interface OutboxSchema {
   _forge_outbox: {
@@ -233,6 +233,49 @@ describe("createOutboxRelay", () => {
     await relay.stop();
 
     expect(bus.messages).toHaveLength(1);
+    await db.shutdown();
+  });
+
+  test("restart uses a fresh retry signal after stop", async () => {
+    const db = createTestDb();
+    await createOutboxTable(db);
+    const bus = new InMemoryMessageBus();
+    const retrySignals: boolean[] = [];
+    const retryPolicy: RetryPolicyLike = {
+      async execute(operation, ctx) {
+        retrySignals.push(ctx.signal.aborted);
+        return operation(ctx);
+      },
+    };
+    const relay = createOutboxRelay({
+      db,
+      bus,
+      retry: retryPolicy,
+      pollIntervalMs: 5,
+    });
+
+    await db.uow(async (tx) => {
+      await tx.outbox.publish("bg.event", { n: 1 });
+    });
+    await relay.start();
+    let deadline = Date.now() + 1000;
+    while (bus.messages.length < 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await relay.stop();
+
+    await db.uow(async (tx) => {
+      await tx.outbox.publish("bg.event", { n: 2 });
+    });
+    await relay.start();
+    deadline = Date.now() + 1000;
+    while (bus.messages.length < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await relay.stop();
+
+    expect(bus.messages.map((m) => m.payload)).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(retrySignals).toEqual([false, false]);
     await db.shutdown();
   });
 });
