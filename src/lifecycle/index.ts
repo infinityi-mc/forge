@@ -8,10 +8,10 @@
  * (rolling back) if any `start()` rejects; shutdown stops them in strict reverse
  * within a bounded budget so a hung component can never block the process.
  *
- * This entry-point exposes the PR A surface: the {@link forge} façade,
- * {@link boot}, {@link asComponent}, the error taxonomy, and the core contracts.
- * Health probes and the full observability surface follow in PR B; first-class
- * module adapters follow in PR C.
+ * This entry-point exposes the {@link forge} façade, {@link boot},
+ * {@link asComponent}, the error taxonomy, the core contracts, the health-probe
+ * surface, and the official module adapters (`databaseComponent`,
+ * `httpServerComponent`, the messaging adapters).
  *
  * @example Minimal usage
  * ```ts
@@ -46,6 +46,26 @@ export {
   ShutdownTimeoutError,
   StartupError,
 } from "./errors";
+
+export {
+  consumerComponent,
+  databaseComponent,
+  httpServerComponent,
+  messageBusComponent,
+  poolComponent,
+  relayComponent,
+  workerComponent,
+} from "./adapters";
+export type {
+  AdapterOptions,
+  DatabaseComponentOptions,
+  DatabaseLike,
+  HttpServerComponentOptions,
+  HttpServerLike,
+  MessageBusLike,
+  PoolLike,
+  StartStopLike,
+} from "./adapters";
 
 export { createProbe, healthRoutes, startHealthServer } from "./health";
 export type {

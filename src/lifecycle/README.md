@@ -24,7 +24,19 @@ It is **not** a process supervisor, a clustering manager, a service mesh, or a D
 6. **Injectable `exit` + `clock`** — the graceful-shutdown completion path calls `exit` (default `process.exit`, `0` normally / `1` if any stop failed or timed out). Every phase is timed with an injected `Clock` so tests never wait on real timers.
 7. **`forge/lifecycle/testing`** — a deterministic `TestClock`, `fakeComponent(name, opts)` (records call order, can delay or throw), `createTestApp({ components })` (boots without real signal handlers, with a recorded `exit`), and `STANDARD_LIFECYCLE_SCENARIOS` + `assertConformance(bootFn?)`.
 
-Deferred: first-class module adapters land in **PR C**.
+---
+
+## Shipped in PR C
+
+First-class **module adapters** (`forge/lifecycle/adapters`) so the Quick Start `components: [db, http, …]` "just works". Each wraps a Forge object into a `Component` with a sensible `healthcheck`, typed against a minimal structural `*Like` interface — **no hard dependency** on the other modules (the real objects already conform).
+
+1. **`forge/data`**
+   - `databaseComponent(name, db, opts?)` — `start` → `db.ping()` (fail-fast; disable with `pingOnStart: false`), `stop` → `db.shutdown()`, derived `healthcheck` pings and maps to `healthy` (`{ data: { ping: "ok" } }`) / `unhealthy`.
+   - `poolComponent(name, pool, opts?)` — `stop` → `pool.shutdown()` (falls back to `drain()`); `healthcheck` from `stats()` (`draining` ⇒ `unhealthy`, else `healthy` with `{ active, idle, waiting }`).
+2. **`forge/http`** — `httpServerComponent(name, server, opts?)` — `stop` → `server.stop(true)` to drain in-flight requests (`closeActiveConnections` configurable). Pair with `preStopDelayMs` so the LB sees `/readyz → 503` before the drain.
+3. **`forge/messaging`** — `messageBusComponent` (`stop` → `flush()` then `shutdown()`) plus `consumerComponent` / `relayComponent` / `workerComponent` (map `start`/`stop`). Place them **after** the DB so they stop **before** it (strict reverse), letting in-flight handlers finish their writes.
+
+Every adapter accepts an optional `healthcheck` override. Tests cover each mapping plus reverse-stop ordering through `boot`.
 
 ---
 
@@ -74,6 +86,12 @@ src/lifecycle/
 ├── shutdown.ts     # reverse-order stop with per-component timeout slices
 ├── phase.ts        # silent logger, per-component child logger, bounded runPhase()
 ├── observability.ts # lifecycle.* metric surface + withSpan (opt-in, guarded)
+├── adapters/
+│   ├── index.ts    # databaseComponent, httpServerComponent, messaging adapters
+│   ├── data.ts     # databaseComponent, poolComponent
+│   ├── http.ts     # httpServerComponent
+│   ├── messaging.ts # messageBus/consumer/relay/workerComponent
+│   └── types.ts    # structural *Like seams + AdapterOptions
 ├── health/
 │   ├── index.ts    # createProbe, healthRoutes, startHealthServer
 │   ├── probe.ts    # worst-of aggregation + ready/uptime + bounded checks
@@ -93,31 +111,39 @@ src/lifecycle/
 
 ## Quick start
 
-```ts
-import { forge, asComponent } from "forge/lifecycle";
+With the official adapters (PR C), the dependency-ordered component list reads directly:
 
-let server: HttpServer;
+```ts
+import {
+  forge,
+  asComponent,
+  databaseComponent,
+  httpServerComponent,
+  consumerComponent,
+} from "forge/lifecycle";
+
+const server = serve(router, { port: config.http.port });
 const app = await forge.boot({
   config,
   components: [
+    // Dependency order — stopped in strict reverse.
     asComponent("telemetry", { stop: () => telemetry.shutdown() }),
-    asComponent("db", {
-      start: () => db.ping(),          // fail-fast if DB unreachable
-      stop: () => db.shutdown(),
-      healthcheck: async () => ({ status: "healthy", data: { ping: "ok" } }),
-    }),
-    asComponent("http", {
-      start: () => { server = serve(router, { port: config.http.port }); },
-      stop: () => server.stop(true),   // drain in-flight requests
-    }),
+    databaseComponent("db", db),          // ping on start, shutdown on stop, healthcheck
+    consumerComponent("consumer", consumer), // stops before the db (reverse order)
+    httpServerComponent("http", server),  // stop(true) drains in-flight requests
   ],
   shutdownTimeout: 30_000,
-  preStopDelayMs: 5_000,
+  preStopDelayMs: 5_000,                  // let the LB notice /readyz → 503
+  health: { port: 9000 },                 // /livez + /readyz
+  telemetry: { meter: telemetry.meter, tracer: telemetry.tracer },
+  logger: telemetry.logger,
 });
 
 app.logger.info("service started");
-await app.done;                        // resolves after graceful shutdown
+await app.done;                          // resolves after graceful shutdown
 ```
+
+`asComponent` is still there for anything custom or with non-standard method names.
 
 ---
 
