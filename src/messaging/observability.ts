@@ -89,6 +89,63 @@ export function createMetrics(telemetry?: MessagingTelemetry): MessagingMetrics 
   };
 }
 
+/** Metric instruments for an {@link createOutboxRelay} instance. */
+export interface OutboxMetrics {
+  /** Rows successfully forwarded to the bus. */
+  readonly dispatched: CounterLike;
+  /** Current relay backlog (undispatched rows). */
+  readonly pending: UpDownCounterLike;
+}
+
+/** Build outbox-relay instruments; all no-op when no meter is present. */
+export function createOutboxMetrics(
+  telemetry?: MessagingTelemetry,
+): OutboxMetrics {
+  const meter = telemetry?.meter;
+  if (meter === undefined) {
+    return { dispatched: NOOP_COUNTER, pending: NOOP_UPDOWN_COUNTER };
+  }
+  return {
+    dispatched: meter.createCounter("messaging.outbox.dispatched", {
+      description: "Outbox rows forwarded to the bus",
+    }),
+    pending:
+      meter.createUpDownCounter?.("messaging.outbox.pending", {
+        description: "Outbox rows awaiting dispatch",
+      }) ?? NOOP_UPDOWN_COUNTER,
+  };
+}
+
+/** Metric instruments for a {@link createJobQueue} / {@link createWorker}. */
+export interface JobMetrics {
+  readonly enqueued: CounterLike;
+  readonly completed: CounterLike;
+  readonly failed: CounterLike;
+}
+
+/** Build background-job instruments; all no-op when no meter is present. */
+export function createJobMetrics(telemetry?: MessagingTelemetry): JobMetrics {
+  const meter = telemetry?.meter;
+  if (meter === undefined) {
+    return {
+      enqueued: NOOP_COUNTER,
+      completed: NOOP_COUNTER,
+      failed: NOOP_COUNTER,
+    };
+  }
+  return {
+    enqueued: meter.createCounter("messaging.jobs.enqueued", {
+      description: "Jobs added to the queue",
+    }),
+    completed: meter.createCounter("messaging.jobs.completed", {
+      description: "Jobs that ran to completion",
+    }),
+    failed: meter.createCounter("messaging.jobs.failed", {
+      description: "Jobs that exhausted their retries",
+    }),
+  };
+}
+
 /**
  * Run `fn` inside an optional span. When no tracer is present the span
  * is a no-op and `fn` runs directly. The span is marked `error` and

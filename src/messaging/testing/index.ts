@@ -12,8 +12,17 @@
 
 export {
   STANDARD_MESSAGING_SCENARIOS,
+  STANDARD_OUTBOX_RELAY_SCENARIOS,
+  STANDARD_JOB_STORE_SCENARIOS,
   assertConformance,
+  assertOutboxRelayConformance,
+  assertJobStoreConformance,
   type MessagingConformanceScenario,
+  type OutboxRelayConformanceScenario,
+  type OutboxRelayHarness,
+  type OutboxRelayHarnessFactory,
+  type JobStoreConformanceScenario,
+  type JobStoreFactory,
   type TransportFactory,
 } from "./conformance";
 
