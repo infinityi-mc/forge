@@ -1,7 +1,7 @@
 import { MigrationError, QueryError } from "../errors";
 import { raw, sql } from "../sql";
 import type { Db } from "../types";
-import { loadMigrations } from "./source";
+import { compareMigrationVersions, loadMigrations } from "./source";
 import type { MigrateOptions, MigrateResult, Migration, MigrationDirection, MigrationState } from "./types";
 
 const STATE_TABLE = "_forge_migrations";
@@ -88,7 +88,11 @@ function pendingDown(
   const order = new Map(migrations.map((migration, index) => [migration.version, index]));
   return [...states.values()]
     .sort(compareMigrationStates(migrations))
-    .filter((state) => to === undefined || (order.get(state.version) ?? -1) > boundary)
+    .filter((state) => {
+      const index = order.get(state.version);
+      if (index === undefined) return true;
+      return to === undefined || index > boundary;
+    })
     .reverse()
     .map((state) => {
       const migration = byVersion.get(state.version);
@@ -128,7 +132,8 @@ function compareMigrationStates(
   return (left, right) => {
     const leftIndex = order.get(left.version) ?? Number.MAX_SAFE_INTEGER;
     const rightIndex = order.get(right.version) ?? Number.MAX_SAFE_INTEGER;
-    return leftIndex - rightIndex;
+    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    return compareMigrationVersions(left.version, right.version);
   };
 }
 

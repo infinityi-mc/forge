@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MigrationError, migrate, sql } from "../../src/data";
 import type { Migration } from "../../src/data/migrations";
+import { createMigrationSource } from "../../src/data/migrations";
 import { createSqliteTestDb } from "../../src/data/testing";
 
 interface TestDb {
@@ -132,24 +133,66 @@ describe("data migrations", () => {
   test("uses migration sort order for to-boundary filtering", async () => {
     const db = createSqliteTestDb();
     const migrations: Migration[] = [
-      { version: "V2.0", name: "upper", up() {}, down() {} },
-      { version: "v1.0", name: "lower", up() {}, down() {} },
+      { version: "ä", name: "umlaut", up() {}, down() {} },
+      { version: "z", name: "zed", up() {}, down() {} },
     ];
 
     const preview = await migrate(db, {
       dryRun: true,
       migrations,
-      to: "v1.0",
+      to: "z",
     });
-    expect(preview.pending.map((migration) => migration.version)).toEqual(["v1.0"]);
+    expect(preview.pending.map((migration) => migration.version)).toEqual(["z"]);
 
     await migrate(db, { migrations });
     const down = await migrate(db, {
       direction: "down",
       migrations,
-      to: "v1.0",
+      to: "z",
     });
-    expect(down.applied.map((migration) => migration.version)).toEqual(["V2.0"]);
+    expect(down.applied.map((migration) => migration.version)).toEqual(["ä"]);
+
+    await db.shutdown();
+  });
+
+  test("sorts migrations with deterministic ordinal comparison", async () => {
+    const source = createMigrationSource([
+      { version: "ä", name: "umlaut", up() {} },
+      { version: "z", name: "zed", up() {} },
+      { version: "a", name: "ay", up() {} },
+    ]);
+
+    const db = createSqliteTestDb();
+    const result = await migrate(db, { dryRun: true, migrations: source });
+
+    expect(result.pending.map((migration) => migration.version)).toEqual(["a", "z", "ä"]);
+    await db.shutdown();
+  });
+
+  test("targeted down migrations reject unknown applied state", async () => {
+    const db = createSqliteTestDb();
+    await db.raw(sql`
+      create table _forge_migrations (
+        version text primary key,
+        name text not null,
+        checksum text not null,
+        applied_at text not null
+      )
+    `).execute();
+    await db.raw(sql`
+      insert into _forge_migrations (version, name, checksum, applied_at)
+      values (${"999"}, ${"missing"}, ${"missing"}, ${"2026-01-01T00:00:00.000Z"})
+    `).execute();
+    await db.raw(sql`
+      insert into _forge_migrations (version, name, checksum, applied_at)
+      values (${"001"}, ${"one"}, ${"one"}, ${"2026-01-01T00:00:00.000Z"})
+    `).execute();
+
+    await expect(migrate(db, {
+      direction: "down",
+      migrations: [{ version: "001", name: "one", up() {}, down() {} }],
+      to: "001",
+    })).rejects.toThrow("Cannot roll back unknown migration");
 
     await db.shutdown();
   });

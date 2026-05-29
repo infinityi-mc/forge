@@ -16,7 +16,17 @@ export async function loadMigrations(
 ): Promise<readonly Migration[]> {
   const migrations = "load" in source ? await source.load() : source;
   validateMigrations(migrations);
-  return [...migrations].sort((left, right) => left.version.localeCompare(right.version));
+  return [...migrations].sort(compareMigrations);
+}
+
+export function compareMigrationVersions(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function compareMigrations(left: Migration, right: Migration): number {
+  return compareMigrationVersions(left.version, right.version);
 }
 
 function validateMigrations(migrations: readonly Migration[]): void {
