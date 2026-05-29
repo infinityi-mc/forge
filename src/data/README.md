@@ -27,6 +27,16 @@ an explicit database handle.
 - Optional query tracing and query/pool metrics through injected
   `forge/telemetry` meter/tracer handles.
 
+## Shipped in PR C
+
+- `db.uow()` unit-of-work transactions with commit, rollback, isolation
+  levels, retry hooks, and nested savepoints.
+- Tenant-scoped handles through `db.withTenant()`, with automatic
+  tenant predicates for table builders and raw SQL disabled by default.
+- Transaction outbox publishing through `tx.outbox.publish()`.
+- `expectUpdated()` optimistic concurrency helper backed by
+  `ConcurrencyError`.
+
 ## Quick Start
 
 ```ts

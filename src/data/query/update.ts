@@ -13,6 +13,7 @@ import type {
   Updateable,
   UpdateQueryBuilder,
 } from "../types";
+import type { TenantContext } from "./select";
 
 export class UpdateBuilder<Row extends Record<string, unknown>>
   extends ExecutableQuery<{ numUpdatedRows: bigint }>
@@ -63,11 +64,12 @@ export function createUpdateBuilder<Row extends Record<string, unknown>>(
   db: Pick<Db<Record<string, Record<string, unknown>>>, "execute">,
   dialect: Dialect,
   table: string,
+  tenant?: TenantContext,
 ): UpdateQueryBuilder<Row> {
   return new UpdateBuilder<Row>(db, dialect, {
     kind: "update",
     table,
     set: {},
-    where: [],
+    where: tenant === undefined ? [] : [{ column: tenant.column, operator: "=", value: tenant.id }],
   });
 }

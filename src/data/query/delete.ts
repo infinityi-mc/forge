@@ -12,6 +12,7 @@ import type {
   SelectType,
   Selectable,
 } from "../types";
+import type { TenantContext } from "./select";
 
 export class DeleteBuilder<Row extends Record<string, unknown>>
   extends ExecutableQuery<{ numDeletedRows: bigint }>
@@ -55,10 +56,11 @@ export function createDeleteBuilder<Row extends Record<string, unknown>>(
   db: Pick<Db<Record<string, Record<string, unknown>>>, "execute">,
   dialect: Dialect,
   table: string,
+  tenant?: TenantContext,
 ): DeleteQueryBuilder<Row> {
   return new DeleteBuilder<Row>(db, dialect, {
     kind: "delete",
     table,
-    where: [],
+    where: tenant === undefined ? [] : [{ column: tenant.column, operator: "=", value: tenant.id }],
   });
 }

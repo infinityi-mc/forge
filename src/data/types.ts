@@ -89,6 +89,47 @@ export interface CreateDbOptions {
   readonly dialect: Dialect;
   readonly driver: Driver;
   readonly telemetry?: DataTelemetryOptions;
+  readonly outbox?: OutboxConfig;
+}
+
+export type IsolationLevel = "read committed" | "repeatable read" | "serializable";
+
+export interface UowOptions {
+  readonly isolationLevel?: IsolationLevel;
+  readonly retries?: number;
+  readonly shouldRetry?: (error: unknown, attempt: number) => boolean | Promise<boolean>;
+}
+
+export interface TenantOptions {
+  readonly column?: string;
+  readonly allowRaw?: boolean;
+}
+
+export interface OutboxConfig {
+  readonly table?: string;
+  readonly publisher?: OutboxPublisher;
+}
+
+export interface OutboxMessage {
+  readonly type: string;
+  readonly payload: unknown;
+  readonly metadata?: Record<string, unknown>;
+  readonly occurredAt?: Date;
+}
+
+export interface OutboxPublisher {
+  publish(message: Required<OutboxMessage>, tx: Db<DatabaseSchema>): Promise<void> | void;
+}
+
+export interface TransactionOutbox {
+  publish(
+    type: string,
+    payload: unknown,
+    options?: {
+      readonly metadata?: Record<string, unknown>;
+      readonly occurredAt?: Date;
+    },
+  ): Promise<void>;
 }
 
 export interface DataTelemetryOptions {
@@ -203,6 +244,15 @@ export interface Db<Schema extends DatabaseSchema> {
   ): DeleteQueryBuilder<TableRow<Schema, Table>>;
   raw<Row = unknown>(query: { readonly text: string; readonly params: readonly unknown[] }): RawQueryBuilder<Row>;
   execute<Row = unknown>(query: CompiledQuery): Promise<QueryResult<Row>>;
+  uow<T>(
+    fn: (tx: TransactionDb<Schema>) => Promise<T> | T,
+    options?: UowOptions,
+  ): Promise<T>;
+  withTenant(tenantId: string, options?: TenantOptions): Db<Schema>;
   ping(): Promise<void>;
   shutdown(): Promise<void>;
+}
+
+export interface TransactionDb<Schema extends DatabaseSchema> extends Db<Schema> {
+  readonly outbox: TransactionOutbox;
 }

@@ -9,6 +9,7 @@
  */
 
 export { createDb } from "./db";
+export { expectUpdated } from "./concurrency";
 export { createPool } from "./pool";
 export { raw, sql } from "./sql";
 export type { SqlFragment } from "./sql";
@@ -37,6 +38,10 @@ export type {
   Driver,
   Insertable,
   InsertQueryBuilder,
+  IsolationLevel,
+  OutboxConfig,
+  OutboxMessage,
+  OutboxPublisher,
   PickSelected,
   QueryKind,
   QueryResult,
@@ -46,6 +51,10 @@ export type {
   SelectType,
   TableName,
   TableRow,
+  TenantOptions,
+  TransactionDb,
+  TransactionOutbox,
+  UowOptions,
   Updateable,
   UpdateQueryBuilder,
   UpdateType,

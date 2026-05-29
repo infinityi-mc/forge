@@ -12,6 +12,12 @@ import type {
   Selectable,
 } from "../types";
 
+export interface TenantContext {
+  readonly id: string;
+  readonly column: string;
+  readonly allowRaw: boolean;
+}
+
 export class SelectBuilder<Row extends Record<string, unknown>, Output>
   extends ExecutableQuery<Output>
   implements SelectQueryBuilder<Row, Output>
@@ -67,7 +73,14 @@ export function createSelectBuilder<Row extends Record<string, unknown>>(
   db: Pick<Db<Record<string, Record<string, unknown>>>, "execute">,
   dialect: Dialect,
   table: string,
+  tenant?: TenantContext,
 ): SelectQueryBuilder<Row, Selectable<Row>> {
-  const node: SelectNode = { kind: "select", table, columns: "*", where: [], orderBy: [] };
+  const node: SelectNode = {
+    kind: "select",
+    table,
+    columns: "*",
+    where: tenant === undefined ? [] : [{ column: tenant.column, operator: "=", value: tenant.id }],
+    orderBy: [],
+  };
   return new SelectBuilder<Row, Selectable<Row>>(db, dialect, node);
 }
