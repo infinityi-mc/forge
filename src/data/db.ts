@@ -236,8 +236,19 @@ interface TransactionState {
   savepoint: number;
 }
 
+const VALID_ISOLATION_LEVELS: ReadonlySet<string> = new Set([
+  "read committed",
+  "repeatable read",
+  "serializable",
+]);
+
 function beginSql(options: UowOptions): string {
   if (options.isolationLevel === undefined) return "begin";
+  if (!VALID_ISOLATION_LEVELS.has(options.isolationLevel)) {
+    throw new TransactionError(
+      `Invalid isolation level: "${options.isolationLevel}"`,
+    );
+  }
   return `begin isolation level ${options.isolationLevel}`;
 }
 
@@ -249,6 +260,8 @@ async function shouldRetry(
   if (options.shouldRetry === undefined) return false;
   return options.shouldRetry(cause, attempt);
 }
+
+const VALID_TABLE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 async function publishOutbox<Schema extends DatabaseSchema>(
   tx: TransactionDb<Schema>,
@@ -271,9 +284,18 @@ async function publishOutbox<Schema extends DatabaseSchema>(
     return;
   }
 
+  const table = options.outbox?.table ?? "_forge_outbox";
+  if (!VALID_TABLE_NAME_RE.test(table)) {
+    throw new QueryError(`Invalid outbox table name: "${table}"`, {
+      sql: "",
+      params: [],
+      dialect: options.dialect.name,
+    });
+  }
+
   const quote = (identifier: string) => rawSql(options.dialect.quoteIdentifier(identifier));
   await tx.execute(compileRaw(options.dialect, sql`
-    insert into ${quote(options.outbox?.table ?? "_forge_outbox")}
+    insert into ${quote(table)}
       (${quote("type")}, ${quote("payload")}, ${quote("metadata")}, ${quote("occurred_at")})
     values (
       ${message.type},

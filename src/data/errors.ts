@@ -34,6 +34,16 @@ export class QueryError extends DataError {
     this.params = options.params;
     this.dialect = options.dialect;
   }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      dialect: this.dialect,
+      sql: this.sql,
+      params: "[REDACTED]",
+    };
+  }
 }
 
 export class PoolError extends DataError {
