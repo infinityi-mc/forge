@@ -70,6 +70,7 @@ function serializeError(error: unknown): DeadLetterEntry["error"] {
  *   transport,
  *   topic: "order.placed",
  *   inbox: inMemoryInboxStore(),
+ *   inboxClaimTtlMs: 60_000,
  *   retry: retry({ maxAttempts: 5, backoff: exponentialBackoff() }),
  *   deadLetter: inMemoryDeadLetterStore(),
  *   handler: async (msg) => { await ship(msg.payload); },
@@ -91,6 +92,10 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
   const deadLetter: DeadLetterStore | undefined = options.deadLetter;
   const retryPolicy: RetryPolicyLike | undefined = options.retry;
   const idempotencyKey = options.idempotencyKey ?? ((m: Message) => m.id);
+  const inboxBeginOptions =
+    options.inboxClaimTtlMs !== undefined
+      ? { ttlMs: options.inboxClaimTtlMs }
+      : undefined;
   const clock: Clock = options.clock ?? { now: () => Date.now() };
 
   let controller = new AbortController();
@@ -200,7 +205,7 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
     const key = idempotencyKey(message);
     let claimed = false;
     if (inbox !== undefined) {
-      const state = await inbox.begin(key);
+      const state = await inbox.begin(key, inboxBeginOptions);
       if (state === "duplicate") {
         metrics.deduped.add(1, { topic });
         logger.debug("messaging.inbox.deduped", { topic, id: message.id });
@@ -235,9 +240,12 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
       await delivery.ack();
     } catch (error) {
       // `retry` wraps the last handler failure on `cause`; unwrap one
-      // level so the DLQ records the originating error, not the
-      // RetryExhaustedError envelope.
-      const failure = (error as { cause?: unknown }).cause ?? error;
+      // level only when a retry policy ran so direct handler errors keep
+      // their full diagnostic context.
+      const failure =
+        retryPolicy !== undefined
+          ? ((error as { cause?: unknown }).cause ?? error)
+          : error;
       if (claimed) await inbox!.release(key);
       outcome = await dropOrRedeliver(delivery, message, failure, attempts);
     } finally {

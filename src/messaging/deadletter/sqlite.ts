@@ -135,8 +135,11 @@ export function sqliteDeadLetterStore(
        FROM ${table} WHERE id = ?`,
   );
   const deleteStmt = db.query(`DELETE FROM ${table} WHERE id = ?`);
+  const seqRow = db
+    .query(`SELECT COALESCE(MAX(seq), 0) AS max_seq FROM ${table}`)
+    .get() as { max_seq: number } | null;
 
-  let seq = 0;
+  let seq = seqRow?.max_seq ?? 0;
 
   return {
     async store(entry: DeadLetterEntry): Promise<void> {

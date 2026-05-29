@@ -207,6 +207,12 @@ export interface ConsumerOptions {
    * (effective exactly-once = at-least-once delivery + dedup).
    */
   readonly inbox?: InboxStore;
+  /**
+   * How long an in-flight inbox claim stays valid before it may be
+   * reclaimed. Useful for durable stores so crash-orphaned claims do
+   * not block transport redelivery forever. Omit for no claim expiry.
+   */
+  readonly inboxClaimTtlMs?: number;
   /** Derives the dedup key for a message. Default: `m.id`. */
   readonly idempotencyKey?: (message: Message) => string;
   /**

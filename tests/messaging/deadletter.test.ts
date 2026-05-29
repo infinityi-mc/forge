@@ -129,4 +129,16 @@ describe("sqliteDeadLetterStore", () => {
     const list = await second.list();
     expect(list.map((e) => e.message.id)).toEqual(["a"]);
   });
+
+  test("continues newest-first ordering after reopening and storing", async () => {
+    const database = new Database(":memory:", { create: true });
+    const first = sqliteDeadLetterStore({ database });
+    await first.store(entry("a"));
+
+    const second = sqliteDeadLetterStore({ database });
+    await second.store(entry("b"));
+
+    const list = await second.list();
+    expect(list.map((e) => e.message.id)).toEqual(["b", "a"]);
+  });
 });

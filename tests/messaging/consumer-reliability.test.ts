@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createConsumer, createMessageBus } from "../../src/messaging";
-import type { Attributes, MeterLike } from "../../src/messaging";
+import type { Attributes, InboxStore, MeterLike } from "../../src/messaging";
 import { inMemoryInboxStore } from "../../src/messaging/inbox";
 import { inMemoryDeadLetterStore } from "../../src/messaging/deadletter";
 import { inMemoryTransport } from "../../src/messaging/transports/memory";
@@ -95,6 +95,37 @@ describe("consumer idempotency", () => {
 
     expect(handled).toBe(1);
   });
+
+  test("passes configured inbox claim TTL to the inbox store", async () => {
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport });
+    let beginOpts: { ttlMs?: number } | undefined;
+    let handled = false;
+    const inbox: InboxStore = {
+      async begin(_key, opts) {
+        beginOpts = opts;
+        return "new";
+      },
+      async commit() {},
+      async release() {},
+    };
+    const consumer = createConsumer({
+      transport,
+      topic: "idem.ttl",
+      inbox,
+      inboxClaimTtlMs: 1_234,
+      handler: () => {
+        handled = true;
+      },
+    });
+    await consumer.start();
+
+    await bus.publish({ type: "idem.ttl", payload: {}, id: "ttl-1" });
+    await waitFor(() => handled);
+    await consumer.stop();
+
+    expect(beginOpts).toEqual({ ttlMs: 1_234 });
+  });
 });
 
 describe("consumer retry + dead-letter", () => {
@@ -152,6 +183,29 @@ describe("consumer retry + dead-letter", () => {
     const size = counters.get("messaging.deadletter.size") ?? [];
     expect(size.length).toBe(1);
     expect(size[0]?.value).toBe(1);
+  });
+
+  test("a direct handler error keeps wrapper context in the DLQ", async () => {
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport });
+    const dlq = inMemoryDeadLetterStore();
+    const consumer = createConsumer({
+      transport,
+      topic: "dlq.context",
+      deadLetter: dlq,
+      handler: () => {
+        const cause = new Error("database unavailable");
+        throw Object.assign(new Error("order projection failed"), { cause });
+      },
+    });
+    await consumer.start();
+
+    await bus.publish({ type: "dlq.context", payload: {}, id: "ctx-1" });
+    await waitFor(async () => (await dlq.list()).length === 1);
+    await consumer.stop();
+
+    const parked = await dlq.list();
+    expect(parked[0]?.error.message).toBe("order projection failed");
   });
 
   test("an undecodable body is dead-lettered rather than redelivered forever", async () => {

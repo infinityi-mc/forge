@@ -32,8 +32,9 @@ with at-least-once delivery for *effective exactly-once* consumption (PR B).
 - **Idempotent consumption** — pass an `InboxStore` (and optional
   `idempotencyKey`) to `createConsumer`. Each message is claimed by key before
   the handler runs; duplicates are skipped, in-flight claims are left for
-  redelivery. `inMemoryInboxStore` + durable `sqliteInboxStore` live behind
-  `forge/messaging/inbox`.
+  redelivery. Set `inboxClaimTtlMs` with durable stores so crash-orphaned
+  in-flight claims can be reclaimed. `inMemoryInboxStore` + durable
+  `sqliteInboxStore` live behind `forge/messaging/inbox`.
 - **Bounded retry** — pass a `retry` policy consumed **structurally** from
   `forge/resilience` (a `retry(...)` policy or a `combine(...)` pipeline; no
   hard dependency). The handler runs under a per-attempt `AbortSignal` that
@@ -90,6 +91,7 @@ const consumer = createConsumer({
   transport,
   topic: "order.placed",
   inbox: inMemoryInboxStore(),
+  inboxClaimTtlMs: 60_000,
   retry: retry({ maxAttempts: 5, backoff: exponentialBackoff() }),
   deadLetter: inMemoryDeadLetterStore(),
   handler: async (msg, ctx) => {
