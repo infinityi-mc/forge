@@ -14,8 +14,14 @@
  */
 
 import { ShutdownError, ShutdownTimeoutError } from "./errors";
+import {
+  type LifecycleMetrics,
+  createLifecycleMetrics,
+  now,
+  withSpan,
+} from "./observability";
 import { componentLogger, runPhase } from "./phase";
-import type { Clock, Component, Logger } from "./types";
+import type { Clock, Component, Logger, TracerLike } from "./types";
 
 /** Outcome of a reverse-order stop sequence. */
 export interface StopResult {
@@ -31,6 +37,10 @@ export interface StopOptions {
   readonly clock: Clock;
   /** Total budget, in ms, for the entire reverse-stop sequence. */
   readonly shutdownTimeout: number;
+  /** `lifecycle.*` instruments. A no-op set is built when omitted. */
+  readonly metrics?: LifecycleMetrics;
+  /** Tracer for per-component stop spans. No spans are opened when omitted. */
+  readonly tracer?: TracerLike;
 }
 
 /**
@@ -43,6 +53,8 @@ export async function stopComponents(
   opts: StopOptions,
 ): Promise<StopResult> {
   const { logger, clock, shutdownTimeout } = opts;
+  const metrics = opts.metrics ?? createLifecycleMetrics();
+  const tracer = opts.tracer;
   const errors: ShutdownError[] = [];
   const timeouts: ShutdownTimeoutError[] = [];
 
@@ -68,6 +80,11 @@ export async function stopComponents(
         { component: component.name, timeoutMs: 0 },
       );
       timeouts.push(err);
+      metrics.stopTimeout.add(1, { component: component.name });
+      metrics.stopDuration.record(0, {
+        component: component.name,
+        outcome: "timeout",
+      });
       log.warn("lifecycle.component.stop.timeout", {
         component: component.name,
         timeoutMs: 0,
@@ -76,14 +93,22 @@ export async function stopComponents(
     }
 
     log.debug("lifecycle.component.stop.start", { component: component.name });
-    const outcome = await runPhase(
-      (ctx) => component.stop(ctx),
-      log,
-      slice,
-      clock,
+    const stoppedAt = now();
+    const outcome = await withSpan(
+      tracer,
+      "lifecycle.component.stop",
+      { kind: "internal", attributes: { component: component.name } },
+      () => runPhase((ctx) => component.stop(ctx), log, slice, clock),
     );
+    const stopOutcome =
+      outcome.kind === "ok" ? "ok" : outcome.kind === "timeout" ? "timeout" : "error";
+    metrics.stopDuration.record(now() - stoppedAt, {
+      component: component.name,
+      outcome: stopOutcome,
+    });
 
     if (outcome.kind === "timeout") {
+      metrics.stopTimeout.add(1, { component: component.name });
       const err = new ShutdownTimeoutError(
         `component "${component.name}" exceeded its ${Math.round(slice)}ms stop slice and was abandoned`,
         { component: component.name, timeoutMs: slice },
