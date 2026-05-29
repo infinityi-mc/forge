@@ -1,8 +1,41 @@
 import { describe, expect, test } from "bun:test";
 import { createConsumer, createMessageBus } from "../../src/messaging";
-import type { Message, Transport, TransportRecord } from "../../src/messaging";
+import type {
+  Attributes,
+  Message,
+  MeterLike,
+  Transport,
+  TransportRecord,
+} from "../../src/messaging";
 import { TransportError } from "../../src/messaging/errors";
 import { inMemoryTransport } from "../../src/messaging/transports/memory";
+
+interface HistogramSample {
+  readonly value: number;
+  readonly attributes?: Attributes;
+}
+
+function recordingMeter(): {
+  meter: MeterLike;
+  histograms: Map<string, HistogramSample[]>;
+} {
+  const histograms = new Map<string, HistogramSample[]>();
+  const meter: MeterLike = {
+    createCounter() {
+      return { add() {} };
+    },
+    createHistogram(name: string) {
+      const samples: HistogramSample[] = [];
+      histograms.set(name, samples);
+      return {
+        record(value: number, attributes?: Attributes) {
+          samples.push({ value, attributes });
+        },
+      };
+    },
+  };
+  return { meter, histograms };
+}
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -97,6 +130,35 @@ describe("createMessageBus", () => {
     await consumer.stop();
 
     expect(received.map((m) => m.type).sort()).toEqual(["a", "b", "c"]);
+  });
+
+  test("records a single publish.duration sample per batch (not one per message)", async () => {
+    const { meter, histograms } = recordingMeter();
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport, telemetry: { meter } });
+
+    await bus.publishBatch([
+      { type: "a", payload: 1 },
+      { type: "b", payload: 2 },
+      { type: "c", payload: 3 },
+    ]);
+
+    const samples = histograms.get("messaging.publish.duration") ?? [];
+    expect(samples.length).toBe(1);
+    expect(samples[0]!.attributes?.["batch.size"]).toBe(3);
+  });
+
+  test("records one publish.duration sample per single publish", async () => {
+    const { meter, histograms } = recordingMeter();
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport, telemetry: { meter } });
+
+    await bus.publish({ type: "a", payload: 1 });
+    await bus.publish({ type: "b", payload: 2 });
+
+    const samples = histograms.get("messaging.publish.duration") ?? [];
+    expect(samples.length).toBe(2);
+    expect(samples[0]!.attributes?.["type"]).toBe("a");
   });
 
   test("wraps transport send failures in TransportError", async () => {

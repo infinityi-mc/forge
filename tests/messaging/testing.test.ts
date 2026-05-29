@@ -66,6 +66,34 @@ describe("InMemoryMessageBus", () => {
       payload: { ok: true },
     });
   });
+
+  test("recorded envelope id matches the id the consumer receives (generated id)", async () => {
+    const transport = inMemoryTransport();
+    const bus = new InMemoryMessageBus({ transport });
+    const received: Message[] = [];
+    const handle = await transport.subscribe({
+      topic: "*",
+      onMessage: (d) => {
+        received.push({
+          id: d.record.id,
+          type: d.record.type,
+          payload: null,
+          headers: {},
+          occurredAt: new Date(),
+          attempt: d.attempt,
+        });
+        d.ack();
+      },
+    });
+
+    // No explicit id — the bus must generate it once and use it for both
+    // the recorded envelope and the forwarded message.
+    await bus.publish({ type: "noid", payload: {} });
+    await waitFor(() => received.length === 1);
+    await handle.stop();
+
+    expect(bus.messages[0]!.id).toBe(received[0]!.id);
+  });
 });
 
 describe("createTestMessaging", () => {

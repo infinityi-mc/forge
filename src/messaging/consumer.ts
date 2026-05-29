@@ -51,8 +51,8 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
   const logger: Logger = options.logger ?? NOOP_LOGGER;
   const metrics = createMetrics(telemetry);
 
-  const controller = new AbortController();
-  const ctx: ConsumeContext = { signal: controller.signal, logger };
+  let controller = new AbortController();
+  let ctx: ConsumeContext = { signal: controller.signal, logger };
 
   let handle: TransportHandle | undefined;
   let started = false;
@@ -106,6 +106,9 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
     async start(): Promise<void> {
       if (started) return;
       started = true;
+      // Fresh signal per start so a consumer can be restarted after stop().
+      controller = new AbortController();
+      ctx = { signal: controller.signal, logger };
       handle = await transport.subscribe({
         topic: options.topic,
         concurrency,

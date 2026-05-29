@@ -112,13 +112,12 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
         records,
         resolved.map((m) => m.type),
       );
-      const elapsed = now() - started;
-      for (const m of resolved) {
-        metrics.publishDuration.record(elapsed, {
-          type: m.type,
-          transport: transport.name,
-        });
-      }
+      // One histogram entry for the batch send (a batch may span types),
+      // so the duration histogram stays consistent with single publishes.
+      metrics.publishDuration.record(now() - started, {
+        transport: transport.name,
+        "batch.size": resolved.length,
+      });
       logger.debug("messaging.published.batch", { count: messages.length });
     },
 

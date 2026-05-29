@@ -106,6 +106,32 @@ describe("createConsumer", () => {
     expect(signal!.aborted).toBe(true);
   });
 
+  test("can be restarted after stop with a fresh (non-aborted) signal", async () => {
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport });
+    const seen: Array<{ payload: unknown; aborted: boolean }> = [];
+    const consumer = createConsumer({
+      transport,
+      topic: "restart",
+      handler: (msg, ctx) => {
+        seen.push({ payload: msg.payload, aborted: ctx.signal.aborted });
+      },
+    });
+
+    await consumer.start();
+    await bus.publish({ type: "restart", payload: "first" });
+    await waitFor(() => seen.length === 1);
+    await consumer.stop();
+
+    await consumer.start();
+    await bus.publish({ type: "restart", payload: "second" });
+    await waitFor(() => seen.length === 2);
+    await consumer.stop();
+
+    expect(seen.map((s) => s.payload)).toEqual(["first", "second"]);
+    expect(seen.every((s) => s.aborted === false)).toBe(true);
+  });
+
   test("start is idempotent", async () => {
     const transport = inMemoryTransport();
     const consumer = createConsumer({

@@ -103,25 +103,42 @@ export class InMemoryMessageBus implements MessageBus {
     this.recorded.length = 0;
   }
 
-  private record(message: PublishMessage): void {
-    this.recorded.push({
-      id: message.id ?? this.idGenerator(),
+  /**
+   * Fully resolve id / headers / occurredAt once, so the recorded
+   * envelope and the message handed to the forwarding bus are identical
+   * (otherwise each would mint its own id / timestamp).
+   */
+  private resolve(message: PublishMessage): Required<PublishMessage> {
+    return {
       type: message.type,
       payload: message.payload,
+      id: message.id ?? this.idGenerator(),
       headers: { ...this.defaultHeaders, ...(message.headers ?? {}) },
       occurredAt: message.occurredAt ?? new Date(),
+    };
+  }
+
+  private record(message: Required<PublishMessage>): void {
+    this.recorded.push({
+      id: message.id,
+      type: message.type,
+      payload: message.payload,
+      headers: message.headers,
+      occurredAt: message.occurredAt,
       attempt: 0,
     });
   }
 
   async publish<T>(message: PublishMessage<T>): Promise<void> {
-    this.record(message);
-    await this.forward?.publish(message);
+    const resolved = this.resolve(message);
+    this.record(resolved);
+    await this.forward?.publish(resolved);
   }
 
   async publishBatch(messages: readonly PublishMessage[]): Promise<void> {
-    for (const message of messages) this.record(message);
-    await this.forward?.publishBatch(messages);
+    const resolved = messages.map((m) => this.resolve(m));
+    for (const message of resolved) this.record(message);
+    await this.forward?.publishBatch(resolved);
   }
 
   async flush(): Promise<void> {
