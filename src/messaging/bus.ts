@@ -108,9 +108,22 @@ export function createMessageBus(options: MessageBusOptions): MessageBus {
       const resolved = messages.map(resolve);
       const records = resolved.map((m) => toRecord(m, codec));
       const started = now();
-      await send(
-        records,
-        resolved.map((m) => m.type),
+      await withSpan(
+        telemetry?.tracer,
+        "publish_batch",
+        {
+          kind: "producer",
+          attributes: {
+            "messaging.system": "forge",
+            "messaging.batch.message_count": resolved.length,
+          },
+        },
+        async () => {
+          await send(
+            records,
+            resolved.map((m) => m.type),
+          );
+        },
       );
       // One histogram entry for the batch send (a batch may span types),
       // so the duration histogram stays consistent with single publishes.

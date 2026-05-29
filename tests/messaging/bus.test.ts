@@ -4,6 +4,8 @@ import type {
   Attributes,
   Message,
   MeterLike,
+  SpanLike,
+  TracerLike,
   Transport,
   TransportRecord,
 } from "../../src/messaging";
@@ -35,6 +37,31 @@ function recordingMeter(): {
     },
   };
   return { meter, histograms };
+}
+
+interface StartedSpan {
+  readonly name: string;
+  readonly attributes?: Attributes;
+}
+
+function recordingTracer(): { tracer: TracerLike; spans: StartedSpan[] } {
+  const spans: StartedSpan[] = [];
+  const span: SpanLike = {
+    setAttribute() {
+      return undefined;
+    },
+    setStatus() {
+      return undefined;
+    },
+    end() {},
+  };
+  const tracer: TracerLike = {
+    startSpan(name, options) {
+      spans.push({ name, attributes: options?.attributes });
+      return span;
+    },
+  };
+  return { tracer, spans };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
@@ -159,6 +186,22 @@ describe("createMessageBus", () => {
     const samples = histograms.get("messaging.publish.duration") ?? [];
     expect(samples.length).toBe(2);
     expect(samples[0]!.attributes?.["type"]).toBe("a");
+  });
+
+  test("starts a producer span for publishBatch (parity with single publish)", async () => {
+    const { tracer, spans } = recordingTracer();
+    const transport = inMemoryTransport();
+    const bus = createMessageBus({ transport, telemetry: { tracer } });
+
+    await bus.publish({ type: "a", payload: 1 });
+    await bus.publishBatch([
+      { type: "b", payload: 2 },
+      { type: "c", payload: 3 },
+    ]);
+
+    expect(spans.map((s) => s.name)).toEqual(["publish a", "publish_batch"]);
+    const batchSpan = spans.find((s) => s.name === "publish_batch");
+    expect(batchSpan?.attributes?.["messaging.batch.message_count"]).toBe(2);
   });
 
   test("wraps transport send failures in TransportError", async () => {

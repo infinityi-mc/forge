@@ -105,15 +105,24 @@ export function createConsumer(options: ConsumerOptions): MessageConsumer {
   return {
     async start(): Promise<void> {
       if (started) return;
+      // Claim the running slot synchronously so concurrent start() calls
+      // can't double-subscribe; fresh signal per start so a stopped
+      // consumer can be restarted.
       started = true;
-      // Fresh signal per start so a consumer can be restarted after stop().
       controller = new AbortController();
       ctx = { signal: controller.signal, logger };
-      handle = await transport.subscribe({
-        topic: options.topic,
-        concurrency,
-        onMessage,
-      });
+      try {
+        handle = await transport.subscribe({
+          topic: options.topic,
+          concurrency,
+          onMessage,
+        });
+      } catch (error) {
+        // Subscribe failed: release the slot so start() can be retried
+        // instead of leaving the consumer wedged (started but unsubscribed).
+        started = false;
+        throw error;
+      }
       logger.info("messaging.consumer.started", {
         topic: options.topic,
         concurrency,

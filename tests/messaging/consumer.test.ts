@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createConsumer, createMessageBus } from "../../src/messaging";
-import type { Message } from "../../src/messaging";
+import type { Message, Transport } from "../../src/messaging";
 import { inMemoryTransport } from "../../src/messaging/transports/memory";
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
@@ -130,6 +130,31 @@ describe("createConsumer", () => {
 
     expect(seen.map((s) => s.payload)).toEqual(["first", "second"]);
     expect(seen.every((s) => s.aborted === false)).toBe(true);
+  });
+
+  test("releases the running slot so start() can be retried when subscribe fails", async () => {
+    let attempts = 0;
+    const flaky: Transport = {
+      name: "flaky",
+      async send() {},
+      async subscribe(subscription) {
+        attempts += 1;
+        if (attempts === 1) throw new Error("broker unavailable");
+        return inMemoryTransport().subscribe(subscription);
+      },
+    };
+    const consumer = createConsumer({
+      transport: flaky,
+      topic: "x",
+      handler: () => {},
+    });
+
+    await expect(consumer.start()).rejects.toThrow("broker unavailable");
+    // The first start() failed; a retry must actually subscribe again
+    // rather than silently no-op on a stale `started` flag.
+    await consumer.start();
+    expect(attempts).toBe(2);
+    await consumer.stop();
   });
 
   test("start is idempotent", async () => {
