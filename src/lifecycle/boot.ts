@@ -65,6 +65,7 @@ export async function boot(options: BootOptions): Promise<Application> {
     ? installSignalHandlers({
         signals: options.signals,
         onSignal: (signal) => triggerShutdown(signal),
+        exit,
       })
     : () => {};
 
