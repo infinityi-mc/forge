@@ -26,7 +26,6 @@ export interface MigrateOptions {
   readonly direction?: MigrationDirection;
   readonly to?: string;
   readonly dryRun?: boolean;
-  readonly lock?: boolean;
 }
 
 export interface MigrateResult {

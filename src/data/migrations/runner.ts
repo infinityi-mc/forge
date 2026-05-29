@@ -71,9 +71,10 @@ function pendingUp(
   states: Map<string, MigrationState>,
   to: string | undefined,
 ): readonly Migration[] {
-  return migrations.filter((migration) => {
+  const boundary = to === undefined ? migrations.length - 1 : findVersionIndex(migrations, to);
+  return migrations.slice(0, boundary + 1).filter((migration) => {
     if (states.has(migration.version)) return false;
-    return to === undefined || migration.version <= to;
+    return true;
   });
 }
 
@@ -83,9 +84,12 @@ function pendingDown(
   to: string | undefined,
 ): readonly Migration[] {
   const byVersion = new Map(migrations.map((migration) => [migration.version, migration]));
+  const boundary = to === undefined ? -1 : findVersionIndex(migrations, to);
+  const order = new Map(migrations.map((migration, index) => [migration.version, index]));
   return [...states.values()]
-    .filter((state) => to === undefined || state.version > to)
-    .sort((left, right) => right.version.localeCompare(left.version))
+    .sort(compareMigrationStates(migrations))
+    .filter((state) => to === undefined || (order.get(state.version) ?? -1) > boundary)
+    .reverse()
     .map((state) => {
       const migration = byVersion.get(state.version);
       if (migration === undefined) {
@@ -102,6 +106,30 @@ function pendingDown(
       }
       return migration;
     });
+}
+
+function findVersionIndex(
+  migrations: readonly Pick<Migration, "version">[],
+  version: string,
+): number {
+  const index = migrations.findIndex((migration) => migration.version === version);
+  if (index === -1) {
+    throw new MigrationError("Migration boundary version was not found", {
+      version,
+    });
+  }
+  return index;
+}
+
+function compareMigrationStates(
+  migrations: readonly Pick<Migration, "version">[],
+): (left: MigrationState, right: MigrationState) => number {
+  const order = new Map(migrations.map((migration, index) => [migration.version, index]));
+  return (left, right) => {
+    const leftIndex = order.get(left.version) ?? Number.MAX_SAFE_INTEGER;
+    const rightIndex = order.get(right.version) ?? Number.MAX_SAFE_INTEGER;
+    return leftIndex - rightIndex;
+  };
 }
 
 async function runUp(db: Db<any>, migrations: readonly Migration[]): Promise<readonly MigrationState[]> {

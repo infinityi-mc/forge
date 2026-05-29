@@ -128,4 +128,29 @@ describe("data migrations", () => {
 
     await db.shutdown();
   });
+
+  test("uses migration sort order for to-boundary filtering", async () => {
+    const db = createSqliteTestDb();
+    const migrations: Migration[] = [
+      { version: "V2.0", name: "upper", up() {}, down() {} },
+      { version: "v1.0", name: "lower", up() {}, down() {} },
+    ];
+
+    const preview = await migrate(db, {
+      dryRun: true,
+      migrations,
+      to: "v1.0",
+    });
+    expect(preview.pending.map((migration) => migration.version)).toEqual(["v1.0"]);
+
+    await migrate(db, { migrations });
+    const down = await migrate(db, {
+      direction: "down",
+      migrations,
+      to: "v1.0",
+    });
+    expect(down.applied.map((migration) => migration.version)).toEqual(["V2.0"]);
+
+    await db.shutdown();
+  });
 });
