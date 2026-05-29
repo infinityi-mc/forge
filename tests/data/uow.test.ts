@@ -22,6 +22,22 @@ function createRecordingDb() {
   return { db, queries };
 }
 
+function createFailingRollbackDb() {
+  const queries: string[] = [];
+  const driver: Driver = {
+    name: "recording",
+    execute<Row = unknown>(query: CompiledQuery): QueryResult<Row> {
+      queries.push(query.sql);
+      if (query.sql === "rollback to savepoint forge_sp_1") {
+        throw new Error("rollback failed");
+      }
+      return { rows: [], numAffectedRows: 0n };
+    },
+  };
+  const db = createDb<TestDb>({ dialect: createSqliteDialect(), driver });
+  return { db, queries };
+}
+
 describe("unit of work", () => {
   test("commits successful work", async () => {
     const { db, queries } = createRecordingDb();
@@ -81,6 +97,23 @@ describe("unit of work", () => {
     ]);
   });
 
+  test("preserves nested application errors when savepoint rollback fails", async () => {
+    const { db, queries } = createFailingRollbackDb();
+
+    await db.uow(async (tx) => {
+      await expect(tx.uow(async () => {
+        throw new Error("nested");
+      })).rejects.toThrow("nested");
+    });
+
+    expect(queries).toEqual([
+      "begin",
+      "savepoint forge_sp_1",
+      "rollback to savepoint forge_sp_1",
+      "commit",
+    ]);
+  });
+
   test("applies isolation level on outer transactions", async () => {
     const { db, queries } = createRecordingDb();
 
@@ -103,5 +136,30 @@ describe("unit of work", () => {
 
     expect(calls).toBe(2);
     expect(queries).toEqual(["begin", "rollback", "begin", "commit"]);
+  });
+
+  test("retries nested work with a fresh savepoint when configured", async () => {
+    const { db, queries } = createRecordingDb();
+    let calls = 0;
+
+    await db.uow(async (tx) => {
+      await tx.uow(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("retry me");
+      }, {
+        retries: 1,
+        shouldRetry: () => true,
+      });
+    });
+
+    expect(calls).toBe(2);
+    expect(queries).toEqual([
+      "begin",
+      "savepoint forge_sp_1",
+      "rollback to savepoint forge_sp_1",
+      "savepoint forge_sp_2",
+      "release savepoint forge_sp_2",
+      "commit",
+    ]);
   });
 });

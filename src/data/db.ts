@@ -161,7 +161,7 @@ export function createDb<Schema extends DatabaseSchema>(
     tenant: TenantContext | undefined,
   ): Promise<T> => {
     if (existingTransaction !== undefined) {
-      return runNestedUow(fn, existingTransaction, tenant);
+      return runNestedUow(fn, uowOptions, existingTransaction, tenant);
     }
 
     const attempts = Math.max(0, uowOptions.retries ?? 0) + 1;
@@ -186,20 +186,28 @@ export function createDb<Schema extends DatabaseSchema>(
 
   const runNestedUow = async <T>(
     fn: (tx: TransactionDb<Schema>) => Promise<T> | T,
+    uowOptions: UowOptions,
     transaction: TransactionState,
     tenant: TenantContext | undefined,
   ): Promise<T> => {
-    const savepoint = `forge_sp_${++transaction.savepoint}`;
-    await executeControl(`savepoint ${savepoint}`);
-    const tx = createHandle(tenant, transaction) as TransactionDb<Schema>;
-    try {
-      const result = await fn(tx);
-      await executeControl(`release savepoint ${savepoint}`);
-      return result;
-    } catch (cause) {
-      await executeControl(`rollback to savepoint ${savepoint}`);
-      throw cause;
+    const attempts = Math.max(0, uowOptions.retries ?? 0) + 1;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const savepoint = `forge_sp_${++transaction.savepoint}`;
+      await executeControl(`savepoint ${savepoint}`);
+      const tx = createHandle(tenant, transaction) as TransactionDb<Schema>;
+      try {
+        const result = await fn(tx);
+        await executeControl(`release savepoint ${savepoint}`);
+        return result;
+      } catch (cause) {
+        await rollbackToSavepointQuietly(savepoint);
+        if (attempt < attempts && await shouldRetry(cause, attempt, uowOptions)) {
+          continue;
+        }
+        throw cause;
+      }
     }
+    throw new TransactionError("Nested transaction retry attempts were exhausted");
   };
 
   const executeControl = (statement: string) =>
@@ -210,6 +218,14 @@ export function createDb<Schema extends DatabaseSchema>(
       await executeControl("rollback");
     } catch {
       // Keep the original transaction failure as the observable error.
+    }
+  };
+
+  const rollbackToSavepointQuietly = async (savepoint: string): Promise<void> => {
+    try {
+      await executeControl(`rollback to savepoint ${savepoint}`);
+    } catch {
+      // Keep the original nested transaction failure as the observable error.
     }
   };
 

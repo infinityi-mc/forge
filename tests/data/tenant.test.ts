@@ -67,6 +67,17 @@ describe("tenant handles", () => {
     ).toThrow(TenantError);
   });
 
+  test("rejects update tenant values for a different tenant", () => {
+    const db = createTestDb().withTenant("tenant-a");
+
+    expect(() =>
+      db.updateTable("users").set({
+        status: "active",
+        tenant_id: "tenant-b",
+      }),
+    ).toThrow(TenantError);
+  });
+
   test("blocks raw SQL by default and allows it explicitly", () => {
     const blocked = createTestDb().withTenant("tenant-a");
     expect(() => blocked.raw(sql`select 1`)).toThrow(TenantError);
