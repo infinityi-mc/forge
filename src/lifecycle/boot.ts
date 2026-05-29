@@ -77,7 +77,13 @@ export async function boot(options: BootOptions): Promise<Application> {
 
   // Optional standalone health server, started before components so `/readyz`
   // returns 503 throughout startup and torn down at the end of shutdown.
-  const disposeHealth = startHealthIfRequested();
+  let disposeHealth: () => void;
+  try {
+    disposeHealth = startHealthIfRequested();
+  } catch (err) {
+    disposeSignals();
+    throw err;
+  }
 
   function startHealthIfRequested(): () => void {
     if (options.health === undefined) return () => {};
