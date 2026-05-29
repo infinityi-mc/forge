@@ -1,0 +1,77 @@
+/**
+ * Structural seams for the official `forge/lifecycle/adapters`.
+ *
+ * The adapters wrap `forge/data`, `forge/http`, and `forge/messaging` objects
+ * into {@link Component}s, but — like the structural telemetry seam — they do so
+ * **without** hard-importing those modules. Each adapter is typed against the
+ * minimal `*Like` interface describing only the methods it touches; the real
+ * `Db`, `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`, and
+ * `MessageBus` already satisfy these structurally, so the adapters are drop-in
+ * with zero changes to the other modules.
+ *
+ * @module
+ */
+
+import type { HealthContext, HealthResult } from "../types";
+
+/** Options shared by every adapter. */
+export interface AdapterOptions {
+  /**
+   * Override the derived `healthcheck`. When omitted, adapters that can derive a
+   * sensible default (database ping, pool stats) do so; the rest contribute no
+   * `healthcheck` seam.
+   */
+  readonly healthcheck?: (
+    ctx: HealthContext,
+  ) => Promise<HealthResult> | HealthResult;
+}
+
+/** The slice of `forge/data`'s `Db` the {@link databaseComponent} uses. */
+export interface DatabaseLike {
+  /** Round-trip the connection; rejects when the database is unreachable. */
+  ping(): Promise<void> | void;
+  /** Release all connections/pools. */
+  shutdown(): Promise<void> | void;
+}
+
+/** Options for {@link databaseComponent}. */
+export interface DatabaseComponentOptions extends AdapterOptions {
+  /** Call `db.ping()` from `start()` to fail-fast on an unreachable DB. Default `true`. */
+  readonly pingOnStart?: boolean;
+}
+
+/** The slice of `forge/data`'s `Pool` the {@link poolComponent} uses. */
+export interface PoolLike {
+  /** Stop handing out resources and await in-flight leases to return. */
+  drain(): Promise<void> | void;
+  /** Drain and dispose every pooled resource. */
+  shutdown?(): Promise<void> | void;
+  /** Live counts used to derive a `healthcheck`. */
+  stats?(): { readonly draining: boolean; readonly active?: number; readonly idle?: number; readonly waiting?: number };
+}
+
+/** The slice of a `forge/http` `HttpServer` the {@link httpServerComponent} uses. */
+export interface HttpServerLike {
+  /** Stop the server; `true` closes active connections after the drain. */
+  stop(closeActiveConnections?: boolean): Promise<void> | void;
+}
+
+/** Options for {@link httpServerComponent}. */
+export interface HttpServerComponentOptions extends AdapterOptions {
+  /** Pass to `server.stop()` — drain in-flight requests then close. Default `true`. */
+  readonly closeActiveConnections?: boolean;
+}
+
+/** A background runner with symmetric `start`/`stop` (consumer/relay/worker). */
+export interface StartStopLike {
+  start(): Promise<void> | void;
+  stop(): Promise<void> | void;
+}
+
+/** The slice of `forge/messaging`'s `MessageBus` the {@link messageBusComponent} uses. */
+export interface MessageBusLike {
+  /** Drain any in-flight publishes. */
+  flush(): Promise<void> | void;
+  /** Release transport resources. */
+  shutdown(): Promise<void> | void;
+}

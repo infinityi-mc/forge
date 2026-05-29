@@ -1,0 +1,225 @@
+import { describe, expect, test } from "bun:test";
+import {
+  consumerComponent,
+  databaseComponent,
+  httpServerComponent,
+  messageBusComponent,
+  poolComponent,
+  relayComponent,
+  workerComponent,
+} from "../../src/lifecycle/adapters";
+import { boot } from "../../src/lifecycle";
+import { TestClock } from "../../src/lifecycle/testing";
+import type { HealthContext } from "../../src/lifecycle/types";
+
+const HEALTH_CTX: HealthContext = {
+  signal: new AbortController().signal,
+  logger: {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+    child() {
+      return this;
+    },
+  },
+};
+
+describe("databaseComponent", () => {
+  test("pings on start, shuts down on stop, and derives a healthcheck", async () => {
+    const calls: string[] = [];
+    const db = {
+      ping: () => {
+        calls.push("ping");
+      },
+      shutdown: () => {
+        calls.push("shutdown");
+      },
+    };
+    const c = databaseComponent("db", db);
+    await c.start?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(calls).toEqual(["ping", "shutdown"]);
+
+    const health = await c.healthcheck?.(HEALTH_CTX);
+    expect(health).toEqual({ status: "healthy", data: { ping: "ok" } });
+  });
+
+  test("a failing ping is reported unhealthy, not thrown", async () => {
+    const db = {
+      ping: () => {
+        throw new Error("unreachable");
+      },
+      shutdown: () => {},
+    };
+    const c = databaseComponent("db", db);
+    const health = await c.healthcheck?.(HEALTH_CTX);
+    expect(health?.status).toBe("unhealthy");
+    expect(health?.detail).toContain("unreachable");
+  });
+
+  test("pingOnStart: false omits the start hook", () => {
+    const db = { ping: () => {}, shutdown: () => {} };
+    const c = databaseComponent("db", db, { pingOnStart: false });
+    expect(c.start).toBeUndefined();
+    expect(c.stop).toBeDefined();
+  });
+
+  test("a custom healthcheck overrides the derived one", async () => {
+    const db = { ping: () => {}, shutdown: () => {} };
+    const c = databaseComponent("db", db, {
+      healthcheck: () => ({ status: "degraded", detail: "read replica lag" }),
+    });
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "read replica lag",
+    });
+  });
+});
+
+describe("poolComponent", () => {
+  test("stop prefers shutdown() and falls back to drain()", async () => {
+    const withShutdown: string[] = [];
+    const c1 = poolComponent("pool", {
+      drain: () => {
+        withShutdown.push("drain");
+      },
+      shutdown: () => {
+        withShutdown.push("shutdown");
+      },
+    });
+    await c1.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(withShutdown).toEqual(["shutdown"]);
+
+    const drainOnly: string[] = [];
+    const c2 = poolComponent("pool", {
+      drain: () => {
+        drainOnly.push("drain");
+      },
+    });
+    await c2.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(drainOnly).toEqual(["drain"]);
+  });
+
+  test("healthcheck reflects stats(): draining is unhealthy", async () => {
+    const c = poolComponent("pool", {
+      drain: () => {},
+      stats: () => ({ draining: true, active: 0, idle: 0, waiting: 0 }),
+    });
+    expect((await c.healthcheck?.(HEALTH_CTX))?.status).toBe("unhealthy");
+
+    const healthy = poolComponent("pool", {
+      drain: () => {},
+      stats: () => ({ draining: false, active: 1, idle: 2, waiting: 0 }),
+    });
+    expect(await healthy.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      data: { active: 1, idle: 2, waiting: 0 },
+    });
+  });
+
+  test("no stats() and no override means no healthcheck seam", () => {
+    const c = poolComponent("pool", { drain: () => {} });
+    expect(c.healthcheck).toBeUndefined();
+  });
+});
+
+describe("httpServerComponent", () => {
+  test("stop drains in-flight requests via stop(true) by default", async () => {
+    const args: boolean[] = [];
+    const c = httpServerComponent("http", {
+      stop: (close) => {
+        args.push(close ?? false);
+      },
+    });
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(args).toEqual([true]);
+    expect(c.start).toBeUndefined();
+  });
+
+  test("closeActiveConnections is configurable", async () => {
+    const args: boolean[] = [];
+    const c = httpServerComponent(
+      "http",
+      {
+        stop: (close) => {
+          args.push(close ?? false);
+        },
+      },
+      { closeActiveConnections: false },
+    );
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(args).toEqual([false]);
+  });
+});
+
+describe("messaging adapters", () => {
+  test("messageBusComponent flushes then shuts down", async () => {
+    const calls: string[] = [];
+    const c = messageBusComponent("bus", {
+      flush: async () => {
+        calls.push("flush");
+      },
+      shutdown: async () => {
+        calls.push("shutdown");
+      },
+    });
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+    expect(calls).toEqual(["flush", "shutdown"]);
+  });
+
+  test("consumer/relay/worker map start and stop", async () => {
+    for (const make of [consumerComponent, relayComponent, workerComponent]) {
+      const calls: string[] = [];
+      const c = make("runner", {
+        start: () => {
+          calls.push("start");
+        },
+        stop: () => {
+          calls.push("stop");
+        },
+      });
+      await c.start?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+      await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+      expect(calls).toEqual(["start", "stop"]);
+    }
+  });
+});
+
+describe("adapters integrate with boot — strict reverse stop order", () => {
+  test("messaging stops before the database it depends on", async () => {
+    const events: string[] = [];
+    const db = {
+      ping: () => {
+        events.push("db:ping");
+      },
+      shutdown: () => {
+        events.push("db:shutdown");
+      },
+    };
+    const consumer = {
+      start: () => {
+        events.push("consumer:start");
+      },
+      stop: () => {
+        events.push("consumer:stop");
+      },
+    };
+    const clock = new TestClock();
+    const app = await boot({
+      components: [databaseComponent("db", db), consumerComponent("consumer", consumer)],
+      clock,
+      installSignals: false,
+      exit: () => {},
+    });
+    expect(events).toEqual(["db:ping", "consumer:start"]);
+
+    await app.stop();
+    expect(events).toEqual([
+      "db:ping",
+      "consumer:start",
+      "consumer:stop",
+      "db:shutdown",
+    ]);
+  });
+});
