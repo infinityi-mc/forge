@@ -18,10 +18,12 @@ import type {
   MessagingTelemetry,
   SpanLike,
   TracerLike,
+  UpDownCounterLike,
 } from "./types";
 
 const NOOP_COUNTER: CounterLike = { add() {} };
 const NOOP_HISTOGRAM: HistogramLike = { record() {} };
+const NOOP_UPDOWN_COUNTER: UpDownCounterLike = { add() {} };
 
 /** A logger whose every method discards its input. */
 export const NOOP_LOGGER: Logger = {
@@ -37,6 +39,10 @@ export interface MessagingMetrics {
   readonly publishDuration: HistogramLike;
   readonly consumed: CounterLike;
   readonly consumeDuration: HistogramLike;
+  /** Duplicate deliveries suppressed by an `InboxStore`. */
+  readonly deduped: CounterLike;
+  /** Current dead-letter depth (incremented as messages are parked). */
+  readonly deadLetterSize: UpDownCounterLike;
 }
 
 /**
@@ -52,6 +58,8 @@ export function createMetrics(telemetry?: MessagingTelemetry): MessagingMetrics 
       publishDuration: NOOP_HISTOGRAM,
       consumed: NOOP_COUNTER,
       consumeDuration: NOOP_HISTOGRAM,
+      deduped: NOOP_COUNTER,
+      deadLetterSize: NOOP_UPDOWN_COUNTER,
     };
   }
   return {
@@ -69,6 +77,15 @@ export function createMetrics(telemetry?: MessagingTelemetry): MessagingMetrics 
       description: "Time to handle a consumed message",
       unit: "ms",
     }),
+    deduped: meter.createCounter("messaging.inbox.deduped", {
+      description: "Duplicate deliveries suppressed by the inbox store",
+    }),
+    // Up-down counters are optional on `MeterLike`; fall back to a no-op
+    // so meters that predate the instrument still work.
+    deadLetterSize:
+      meter.createUpDownCounter?.("messaging.deadletter.size", {
+        description: "Messages currently parked in the dead-letter store",
+      }) ?? NOOP_UPDOWN_COUNTER,
   };
 }
 

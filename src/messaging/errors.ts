@@ -76,3 +76,42 @@ export class HandlerError extends MessagingError {
     }
   }
 }
+
+/**
+ * A message exhausted its bounded retries and was routed to the
+ * dead-letter store. Raised internally on the consume path; the
+ * originating handler failure is preserved on `cause`. It is recorded
+ * and dead-lettered, never surfaced to the caller of `publish`.
+ */
+export class MessageDroppedError extends MessagingError {
+  /** The id of the dropped message. */
+  readonly messageId?: string;
+  /** How many handler attempts were made before giving up. */
+  readonly attempts?: number;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { messageId?: string; attempts?: number },
+  ) {
+    super(message, options);
+    this.name = "MessageDroppedError";
+    if (options?.messageId !== undefined) this.messageId = options.messageId;
+    if (options?.attempts !== undefined) this.attempts = options.attempts;
+  }
+}
+
+/**
+ * An idempotency / inbox store reported an inconsistent state — for
+ * example a `commit`/`release` for a key that was never claimed, or a
+ * backing-store failure during dedup.
+ */
+export class IdempotencyError extends MessagingError {
+  /** The idempotency key involved, when known. */
+  readonly key?: string;
+
+  constructor(message: string, options?: ErrorOptions & { key?: string }) {
+    super(message, options);
+    this.name = "IdempotencyError";
+    if (options?.key !== undefined) this.key = options.key;
+  }
+}

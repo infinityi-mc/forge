@@ -7,13 +7,17 @@
  * `inMemoryTransport`, and the {@link MessagingError} taxonomy. Delivery
  * is at-least-once and unordered.
  *
- * Idempotent consumers + dead-letter queues (PR B) and the
+ * PR B adds the reliability surface: idempotent consumption via an
+ * {@link InboxStore} (`forge/messaging/inbox`), bounded retry consumed
+ * structurally from `forge/resilience`, and {@link DeadLetterStore}
+ * dead-lettering with redrive (`forge/messaging/deadletter`). The
  * `forge/data` outbox relay + durable transports + background jobs
  * (PR C) build on these contracts.
  *
  * Transports live behind their own entrypoint, e.g.
- * `forge/messaging/transports/memory`, and test doubles behind
- * `forge/messaging/testing`.
+ * `forge/messaging/transports/memory`; stores behind
+ * `forge/messaging/inbox` and `forge/messaging/deadletter`; and test
+ * doubles behind `forge/messaging/testing`.
  *
  * @example
  * ```ts
@@ -42,6 +46,8 @@ export type { Codec } from "./codec";
 
 export {
   HandlerError,
+  IdempotencyError,
+  MessageDroppedError,
   MessagingError,
   SerializationError,
   TransportError,
@@ -49,10 +55,15 @@ export {
 
 export type {
   Attributes,
+  Clock,
   ConsumeContext,
   ConsumerOptions,
   CounterLike,
+  DeadLetterEntry,
+  DeadLetterStore,
   HistogramLike,
+  InboxState,
+  InboxStore,
   Logger,
   LogAttributes,
   Message,
@@ -63,6 +74,9 @@ export type {
   MessagingTelemetry,
   MeterLike,
   PublishMessage,
+  RetryExecutionContext,
+  RetryOperation,
+  RetryPolicyLike,
   SpanLike,
   TracerLike,
   Transport,
@@ -70,4 +84,5 @@ export type {
   TransportHandle,
   TransportRecord,
   TransportSubscription,
+  UpDownCounterLike,
 } from "./types";

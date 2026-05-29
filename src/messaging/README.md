@@ -6,9 +6,8 @@ swappable contracts — a `MessageBus` (publish), a `MessageConsumer` (consume),
 a `Transport` (broker adapter), and a `Codec` (serialization) — each with a
 real and an in-memory implementation.
 
-Delivery is **at-least-once and unordered** by default. Effective
-exactly-once (at-least-once delivery + idempotent consumption) and ordering
-options arrive with the idempotency features in PR B.
+Delivery is **at-least-once and unordered** by default. Pair an `InboxStore`
+with at-least-once delivery for *effective exactly-once* consumption (PR B).
 
 ## Shipped in PR A
 
@@ -28,10 +27,33 @@ options arrive with the idempotency features in PR B.
   `createTestMessaging` harness, and `STANDARD_MESSAGING_SCENARIOS` +
   `assertConformance` for verifying bring-your-own transports.
 
+## Shipped in PR B
+
+- **Idempotent consumption** — pass an `InboxStore` (and optional
+  `idempotencyKey`) to `createConsumer`. Each message is claimed by key before
+  the handler runs; duplicates are skipped, in-flight claims are left for
+  redelivery. `inMemoryInboxStore` + durable `sqliteInboxStore` live behind
+  `forge/messaging/inbox`.
+- **Bounded retry** — pass a `retry` policy consumed **structurally** from
+  `forge/resilience` (a `retry(...)` policy or a `combine(...)` pipeline; no
+  hard dependency). The handler runs under a per-attempt `AbortSignal` that
+  also trips on consumer stop, so a composed `timeout` cancels in-flight work.
+- **Dead Letter Queues** — pass a `deadLetter` store; once retries are
+  exhausted (or a body can't be decoded) the message is parked and the
+  delivery acked, raising `MessageDroppedError` internally. `redrive` re-emits
+  a parked message to its source topic. `inMemoryDeadLetterStore` + durable
+  `sqliteDeadLetterStore` live behind `forge/messaging/deadletter`.
+- **Observability** — `messaging.inbox.deduped` (counter),
+  `messaging.deadletter.size` (up-down counter), and an `outcome="dead"` label
+  on `messaging.messages.consumed`.
+- **Errors** — adds `MessageDroppedError` and `IdempotencyError`.
+
+> SQLite stores use `bun:sqlite` directly with row-atomic dedup. Sharing the
+> *same* `forge/data` transaction as the handler's business write lands with
+> the outbox relay in PR C.
+
 ## Upcoming
 
-- **PR B** — idempotent consumers (`InboxStore`), bounded retry, and
-  Dead Letter Queues; the full observability surface.
 - **PR C** — the `forge/data` outbox relay, durable SQLite / Postgres
   transports, and background jobs.
 
@@ -50,6 +72,27 @@ const consumer = createConsumer({
   concurrency: 4,
   handler: async (msg, ctx) => {
     ctx.logger.info("processing order", { id: msg.id });
+    await ship(msg.payload, { signal: ctx.signal });
+  },
+});
+```
+
+Make consumption reliable — dedup duplicates, retry transient failures, and
+park poison messages:
+
+```ts
+import { createConsumer } from "forge/messaging";
+import { inMemoryInboxStore } from "forge/messaging/inbox";
+import { inMemoryDeadLetterStore } from "forge/messaging/deadletter";
+import { retry, exponentialBackoff } from "forge/resilience";
+
+const consumer = createConsumer({
+  transport,
+  topic: "order.placed",
+  inbox: inMemoryInboxStore(),
+  retry: retry({ maxAttempts: 5, backoff: exponentialBackoff() }),
+  deadLetter: inMemoryDeadLetterStore(),
+  handler: async (msg, ctx) => {
     await ship(msg.payload, { signal: ctx.signal });
   },
 });
@@ -98,12 +141,15 @@ The bus and consumers accept optional, **structurally-typed** `telemetry`
 | :-- | :-- |
 | `messaging.messages.published` | counter |
 | `messaging.publish.duration` | histogram (ms) |
-| `messaging.messages.consumed` | counter (labels: `outcome`) |
+| `messaging.messages.consumed` | counter (labels: `outcome` = `ok` / `retry` / `dead`) |
 | `messaging.consume.duration` | histogram (ms) |
+| `messaging.inbox.deduped` | counter |
+| `messaging.deadletter.size` | up-down counter |
 
 ## Constraints
 
-- At-least-once delivery: handlers must tolerate duplicates (idempotency is
-  PR B).
-- `inMemoryTransport` is for tests and single-process fan-out — it is not
-  durable. Durable transports arrive in PR C.
+- At-least-once delivery: handlers must tolerate duplicates. Add an
+  `InboxStore` for effective exactly-once consumption.
+- `inMemoryTransport` and the in-memory stores are for tests and
+  single-process fan-out — they are not durable. Durable transports arrive in
+  PR C; durable `sqlite*` stores ship in PR B.
