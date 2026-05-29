@@ -11,7 +11,10 @@
  *   (recorded via a non-zero exit, not thrown to the caller);
  * - readiness is false before boot completes and immediately on shutdown;
  * - a second identical signal forces exit;
- * - the signal disposer removes every listener (no leaks between tests).
+ * - the signal disposer removes every listener (no leaks between tests);
+ * - readiness gating: a closed gate / a failing critical check is not-ready,
+ *   while a non-critical failure degrades but stays ready;
+ * - liveness independence: liveness never calls downstream checks.
  *
  * Errors are plain `Error`s so the suite is framework-agnostic. Pass a custom
  * {@link BootFn} to {@link assertConformance} to validate an alternative
@@ -22,6 +25,7 @@
 
 import { boot as stockBoot } from "../boot";
 import { StartupError } from "../errors";
+import { createProbe } from "../health";
 import { installSignalHandlers } from "../signals";
 import type { Application, BootOptions } from "../types";
 import { TestClock } from "./clock";
@@ -241,6 +245,97 @@ export const STANDARD_LIFECYCLE_SCENARIOS: readonly LifecycleConformanceScenario
         dispose();
         if (source.count("SIGTERM") !== 0 || source.count("SIGINT") !== 0) {
           throw new Error("expected the disposer to remove all listeners");
+        }
+      },
+    },
+    {
+      name: "readiness gating: closed gate and critical failure are not-ready, non-critical only degrades",
+      async run() {
+        // A closed gate (startup/shutdown) is not-ready without touching checks.
+        let calledClosedGate = false;
+        const gated = createProbe({
+          ready: () => false,
+          checks: [
+            {
+              name: "db",
+              critical: true,
+              check: () => {
+                calledClosedGate = true;
+                return { status: "healthy" };
+              },
+            },
+          ],
+        });
+        const whileGated = await gated.check();
+        if (whileGated.ready) {
+          throw new Error("expected not-ready while the boot gate is closed");
+        }
+        if (calledClosedGate) {
+          throw new Error("expected a closed gate to short-circuit before downstream checks");
+        }
+
+        // An open gate with a failing *critical* check → not-ready + unhealthy.
+        const critical = createProbe({
+          ready: () => true,
+          checks: [{ name: "db", critical: true, check: () => ({ status: "unhealthy" }) }],
+        });
+        const criticalResult = await critical.check();
+        if (criticalResult.ready || criticalResult.status !== "unhealthy") {
+          throw new Error(
+            `expected a critical failure to be not-ready+unhealthy; got ready=${criticalResult.ready} status=${criticalResult.status}`,
+          );
+        }
+
+        // A failing *non-critical* check → still ready, but degraded.
+        const nonCritical = createProbe({
+          ready: () => true,
+          checks: [{ name: "cache", critical: false, check: () => ({ status: "unhealthy" }) }],
+        });
+        const degraded = await nonCritical.check();
+        if (!degraded.ready || degraded.status !== "degraded") {
+          throw new Error(
+            `expected a non-critical failure to stay ready but degrade; got ready=${degraded.ready} status=${degraded.status}`,
+          );
+        }
+      },
+    },
+    {
+      name: "liveness independence: liveness never calls downstream checks",
+      async run() {
+        let downstreamCalls = 0;
+        const probe = createProbe({
+          ready: () => true,
+          live: () => true,
+          checks: [
+            {
+              name: "db",
+              critical: true,
+              check: () => {
+                downstreamCalls++;
+                return { status: "unhealthy" };
+              },
+            },
+          ],
+        });
+        const live = probe.liveness();
+        if (live.status !== "healthy" || !live.ready) {
+          throw new Error(
+            `expected liveness healthy regardless of downstreams; got status=${live.status} ready=${live.ready}`,
+          );
+        }
+        if (downstreamCalls !== 0) {
+          throw new Error(
+            `expected liveness to call no downstream checks, got ${downstreamCalls}`,
+          );
+        }
+        // …and a flipped liveness gate reports unhealthy without any checks.
+        const wedged = createProbe({
+          live: () => false,
+          checks: [{ name: "db", check: () => ({ status: "healthy" }) }],
+        });
+        const dead = wedged.liveness();
+        if (dead.status !== "unhealthy" || dead.ready) {
+          throw new Error("expected a closed liveness gate to report unhealthy/not-ready");
         }
       },
     },

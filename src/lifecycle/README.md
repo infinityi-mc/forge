@@ -24,7 +24,22 @@ It is **not** a process supervisor, a clustering manager, a service mesh, or a D
 6. **Injectable `exit` + `clock`** — the graceful-shutdown completion path calls `exit` (default `process.exit`, `0` normally / `1` if any stop failed or timed out). Every phase is timed with an injected `Clock` so tests never wait on real timers.
 7. **`forge/lifecycle/testing`** — a deterministic `TestClock`, `fakeComponent(name, opts)` (records call order, can delay or throw), `createTestApp({ components })` (boots without real signal handlers, with a recorded `exit`), and `STANDARD_LIFECYCLE_SCENARIOS` + `assertConformance(bootFn?)`.
 
-Deferred: health probes (`Probe`/`AggregateHealth`, the standalone `Bun.serve` health server, `healthRoutes()`) and the full `lifecycle.*` metric/span surface land in **PR B**; first-class module adapters land in **PR C**.
+Deferred: first-class module adapters land in **PR C**.
+
+---
+
+## Shipped in PR B
+
+1. **Health probes** (`forge/lifecycle/health`) — `createProbe({ checks, ready, live, … })` returns a `Probe` with two questions:
+   - `check()` — **readiness**: runs every registered check (each bounded by `checkTimeout`) and folds them **worst-of** (`healthy` < `degraded` < `unhealthy`). `critical: boolean` per check — a non-critical failure *degrades* but stays ready; a critical failure makes the app *not-ready*. Reports `ready` (boot gate AND no critical failure) and `uptimeMs`. A closed `ready` gate (startup/shutdown) short-circuits to not-ready **without** calling downstreams.
+   - `liveness()` — deliberately cheap, reflects only the `live` gate and **never** calls downstream checks, so a dependency outage can't make an orchestrator kill the process.
+2. **HTTP exposure** — two shapes for the same `Probe`:
+   - `startHealthServer(probe, { port })` — a standalone `Bun.serve` on its own port (default `9000`), `/livez` + `/readyz`, `404` elsewhere; returns `{ port, url, stop() }`.
+   - `healthRoutes(probe, opts)` — a framework-agnostic `handle(request) => Response | undefined` that mounts on a `forge/http` router (no extra port).
+   - Both are k8s-shaped: `200` healthy/ready, `503` unhealthy/not-ready, JSON `AggregateHealth` body.
+3. **`boot({ health })`** — when `health` is provided, `boot` starts the standalone server **before** components (so `/readyz` is `503` throughout startup) and tears it down at the end of shutdown (and on rollback). Checks are auto-derived from components that expose `healthcheck`.
+4. **Observability** (`lifecycle.*`, opt-in) — with an injected `telemetry` handle, `boot`/shutdown emit `lifecycle.boot.duration`, `lifecycle.component.{start,stop}.duration` (labelled `component`/`outcome`), `lifecycle.shutdown.duration`, `lifecycle.component.stop.timeout`, `lifecycle.ready`, and `lifecycle.health.check.duration`, plus boot/shutdown/per-component spans. Every emit is guarded so telemetry being the *first-started* / *last-stopped* component can never throw into the orchestrator.
+5. **Conformance** — `STANDARD_LIFECYCLE_SCENARIOS` gains **readiness gating** (closed gate / critical vs non-critical failure) and **liveness independence** scenarios.
 
 ---
 
@@ -58,6 +73,13 @@ src/lifecycle/
 ├── boot.ts         # forge.boot(): ordered start + rollback, Application factory
 ├── shutdown.ts     # reverse-order stop with per-component timeout slices
 ├── phase.ts        # silent logger, per-component child logger, bounded runPhase()
+├── observability.ts # lifecycle.* metric surface + withSpan (opt-in, guarded)
+├── health/
+│   ├── index.ts    # createProbe, healthRoutes, startHealthServer
+│   ├── probe.ts    # worst-of aggregation + ready/uptime + bounded checks
+│   ├── routes.ts   # framework-agnostic /livez + /readyz handlers
+│   ├── server.ts   # standalone Bun.serve health server
+│   └── types.ts    # Probe, AggregateHealth, HealthCheck, HealthServerOptions
 ├── signals/
 │   ├── index.ts    # installSignalHandlers
 │   └── types.ts    # SignalHandlerOptions, SignalSource
@@ -96,6 +118,39 @@ const app = await forge.boot({
 app.logger.info("service started");
 await app.done;                        // resolves after graceful shutdown
 ```
+
+---
+
+## Health probes
+
+Let `boot` run a standalone health server (k8s sidecar shape):
+
+```ts
+const app = await forge.boot({
+  components: [db, http],
+  health: { port: 9000 },              // /livez + /readyz on a separate port
+});
+// GET /readyz → 503 during startup/shutdown, 200 once ready
+// GET /livez  → 200 unless the process is wedged
+```
+
+Or build a `Probe` yourself and mount it on an existing `forge/http` router with `healthRoutes()`:
+
+```ts
+import { createProbe, healthRoutes } from "forge/lifecycle/health";
+
+const probe = createProbe({
+  ready: () => app.ready,
+  checks: [
+    { name: "db", check: (ctx) => db.healthcheck(ctx) },          // critical (default)
+    { name: "cache", critical: false, check: () => cache.ping() }, // degrades, stays ready
+  ],
+});
+const routes = healthRoutes(probe);
+// router.get("/readyz", (req) => routes.handle(req));
+```
+
+`check()` aggregates worst-of with the `critical` rule; `liveness()` stays cheap and never calls downstreams.
 
 ---
 

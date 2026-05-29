@@ -47,6 +47,18 @@ export {
   StartupError,
 } from "./errors";
 
+export { createProbe, healthRoutes, startHealthServer } from "./health";
+export type {
+  AggregateHealth,
+  HealthCheck,
+  HealthRoutes,
+  HealthRoutesOptions,
+  HealthServer,
+  HealthServerOptions,
+  Probe,
+  ProbeOptions,
+} from "./health";
+
 export { installSignalHandlers } from "./signals";
 export type { SignalHandlerOptions, SignalSource } from "./signals";
 

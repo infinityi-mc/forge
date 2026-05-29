@@ -11,6 +11,8 @@
  * @module
  */
 
+import type { HealthServerOptions } from "./health/types";
+
 /* -------------------------------------------------------------------------- */
 /* Component seam                                                             */
 /* -------------------------------------------------------------------------- */
@@ -107,6 +109,12 @@ export interface BootOptions {
   readonly telemetry?: LifecycleTelemetry;
   /** Opt-in logger (structural). A silent no-op logger is used when omitted. */
   readonly logger?: Logger;
+  /**
+   * Optional standalone health server (own port, `/livez` + `/readyz`). Omit to
+   * expose no HTTP probes. The server starts before components (so `/readyz` is
+   * `503` during startup) and is torn down at the end of shutdown.
+   */
+  readonly health?: HealthServerOptions;
   /** Drain delay before stopping: lets LBs notice unreadiness. Default 0. */
   readonly preStopDelayMs?: number;
 
