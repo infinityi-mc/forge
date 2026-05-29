@@ -49,14 +49,44 @@ with at-least-once delivery for *effective exactly-once* consumption (PR B).
   on `messaging.messages.consumed`.
 - **Errors** — adds `MessageDroppedError` and `IdempotencyError`.
 
-> SQLite stores use `bun:sqlite` directly with row-atomic dedup. Sharing the
-> *same* `forge/data` transaction as the handler's business write lands with
-> the outbox relay in PR C.
+## Shipped in PR C
 
-## Upcoming
+- **Outbox relay** — `createOutboxRelay({ db, bus })` (behind
+  `forge/messaging/outbox`) polls `forge/data`'s transactional outbox
+  (`_forge_outbox`) and forwards undelivered rows to a `MessageBus`, marking
+  them dispatched. The producer writes its business row and the outbox row in
+  the *same* transaction (`tx.outbox.publish(...)`); the relay delivers them
+  at-least-once — pair it with an `InboxStore` for effective exactly-once. It
+  depends on a **structural** `DbLike` slice, so a real `forge/data` `Db` is
+  drop-in with no import. The relay idempotently adds three
+  forward-compatible columns (`dispatched_at`, `attempts`, `available_at`) to
+  the outbox table on start.
+- **Durable transports** — `sqliteTransport` (`forge/messaging/transports/sqlite`)
+  is a single-node `bun:sqlite`-backed queue; `postgresTransport`
+  (`forge/messaging/transports/postgres`) is a multi-node queue that claims
+  rows with `FOR UPDATE SKIP LOCKED` and wakes workers via `LISTEN`/`NOTIFY`.
+  Both survive restarts, deliver at-least-once with competing-consumer
+  semantics, and pass `STANDARD_MESSAGING_SCENARIOS`. `postgresTransport`
+  talks to a structural client (a `node-postgres` `Client`/`Pool` drops in).
+- **Background jobs** — `createJobQueue` (`enqueue` / `schedule` / `every`) and
+  `createWorker` (behind `forge/messaging/jobs`) over a `JobStore`
+  (`inMemoryJobStore` + durable `sqliteJobStore`). Workers claim jobs with
+  skip-locked semantics, reuse the consumer's retry → dead-letter machinery,
+  and re-schedule recurring `every(...)` jobs single-flight.
+- **Observability** — `messaging.outbox.pending` (up-down counter),
+  `messaging.outbox.dispatched` (counter), and
+  `messaging.jobs.{enqueued,completed,failed}` (counters).
+- **Errors** — adds `OutboxRelayError` and `JobError`.
 
-- **PR C** — the `forge/data` outbox relay, durable SQLite / Postgres
-  transports, and background jobs.
+> The outbox relay realizes the "same `forge/data` transaction as the business
+> write" story the PR B stores deferred: the write and the outbox row commit
+> together, and the relay handles delivery.
+
+## Lifecycle
+
+The relay, worker, and consumer all expose `start()` / `stop()`, so they slot
+into a `forge/lifecycle` supervisor once that module lands. No lifecycle
+integration is wired here.
 
 ## Quick start
 
@@ -106,6 +136,46 @@ await consumer.stop();
 await bus.shutdown();
 ```
 
+Relay `forge/data`'s transactional outbox to the bus — the business write and
+the event commit atomically, the relay delivers at-least-once:
+
+```ts
+import { createMessageBus } from "forge/messaging";
+import { createOutboxRelay } from "forge/messaging/outbox";
+import { postgresTransport } from "forge/messaging/transports/postgres";
+
+const bus = createMessageBus({ transport: postgresTransport({ client }) });
+const relay = createOutboxRelay({ db, bus }); // `db` is a forge/data Db
+await relay.start();
+
+// elsewhere, the producer writes business state + the event in one tx:
+await db.transaction(async (tx) => {
+  await tx.insertInto("orders").values(order).execute();
+  await tx.outbox.publish("order.placed", { orderId: order.id });
+});
+```
+
+Run durable background jobs — now, scheduled, or recurring:
+
+```ts
+import { createJobQueue, createWorker, sqliteJobStore } from "forge/messaging/jobs";
+
+const store = sqliteJobStore({ filename: "./jobs.db" });
+const queue = createJobQueue({ store });
+const worker = createWorker({
+  store,
+  concurrency: 8,
+  handlers: {
+    "email.send": async (job, ctx) => sendEmail(job.payload, { signal: ctx.signal }),
+  },
+});
+await worker.start();
+
+await queue.enqueue("email.send", { to: "a@b.c" });
+await queue.schedule("email.send", new Date(Date.now() + 60_000), { to: "later@b.c" });
+await queue.every("report.daily", 86_400_000);
+```
+
 ## Testing
 
 ```ts
@@ -147,11 +217,20 @@ The bus and consumers accept optional, **structurally-typed** `telemetry`
 | `messaging.consume.duration` | histogram (ms) |
 | `messaging.inbox.deduped` | counter |
 | `messaging.deadletter.size` | up-down counter |
+| `messaging.outbox.pending` | up-down counter |
+| `messaging.outbox.dispatched` | counter |
+| `messaging.jobs.enqueued` | counter |
+| `messaging.jobs.completed` | counter |
+| `messaging.jobs.failed` | counter |
 
 ## Constraints
 
 - At-least-once delivery: handlers must tolerate duplicates. Add an
   `InboxStore` for effective exactly-once consumption.
 - `inMemoryTransport` and the in-memory stores are for tests and
-  single-process fan-out — they are not durable. Durable transports arrive in
-  PR C; durable `sqlite*` stores ship in PR B.
+  single-process fan-out — they are not durable. Use `sqliteTransport` /
+  `postgresTransport` and the `sqlite*` stores for durability.
+- Delivery is unordered at-least-once; per-key FIFO ordering for the relay and
+  transports is not yet implemented.
+- Background-job scheduling is single-node single-flight; multi-node leader
+  election for `every(...)` is out of scope.

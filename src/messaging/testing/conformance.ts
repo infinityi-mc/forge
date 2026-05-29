@@ -27,8 +27,14 @@ import { createMessageBus } from "../bus";
 import { createConsumer } from "../consumer";
 import { inMemoryDeadLetterStore } from "../deadletter";
 import { inMemoryInboxStore } from "../inbox";
+import { createOutboxRelay } from "../outbox";
+import type { DbLike } from "../outbox";
+import { createJobQueue, createWorker } from "../jobs";
+import type { JobStore } from "../jobs";
 import type {
   Message,
+  MessageBus,
+  PublishMessage,
   MessageConsumer,
   RetryExecutionContext,
   RetryOperation,
@@ -326,6 +332,234 @@ export async function assertConformance(
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new Error(`Scenario "${scenario.name}" failed: ${reason}`, {
+        cause,
+      });
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Outbox relay conformance                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** A bus double recording published messages, local to the suite. */
+class RecordingBus implements MessageBus {
+  readonly messages: Message[] = [];
+  async publish<T>(message: PublishMessage<T>): Promise<void> {
+    this.messages.push({
+      id: message.id ?? `${this.messages.length}`,
+      type: message.type,
+      payload: message.payload,
+      headers: { ...(message.headers ?? {}) },
+      occurredAt: message.occurredAt ?? new Date(),
+      attempt: 1,
+    });
+  }
+  async publishBatch<T>(messages: readonly PublishMessage<T>[]): Promise<void> {
+    for (const message of messages) await this.publish(message);
+  }
+  async flush(): Promise<void> {}
+  async shutdown(): Promise<void> {}
+}
+
+/**
+ * Harness an outbox-relay scenario drives: a structural {@link DbLike}
+ * over an outbox table, plus an `insert` that writes a pending row the
+ * way `forge/data`'s `tx.outbox.publish` would. Every `forge/data`
+ * dialect can supply one to verify the relay end-to-end.
+ */
+export interface OutboxRelayHarness {
+  readonly db: DbLike;
+  /** Insert a pending outbox row. */
+  insert(row: {
+    type: string;
+    payload: string;
+    metadata: string;
+    occurredAt: string;
+  }): Promise<void>;
+}
+
+/** Returns a fresh {@link OutboxRelayHarness} per scenario run. */
+export type OutboxRelayHarnessFactory = () =>
+  | OutboxRelayHarness
+  | Promise<OutboxRelayHarness>;
+
+/** A single outbox-relay conformance scenario. */
+export interface OutboxRelayConformanceScenario {
+  readonly name: string;
+  run(factory: OutboxRelayHarnessFactory): Promise<void>;
+}
+
+/** Scenarios that hold for every well-formed outbox relay setup. */
+export const STANDARD_OUTBOX_RELAY_SCENARIOS: readonly OutboxRelayConformanceScenario[] =
+  [
+    {
+      name: "dispatches pending rows to the bus in order",
+      async run(factory) {
+        const harness = await factory();
+        await harness.insert({
+          type: "thing.happened",
+          payload: JSON.stringify({ n: 1 }),
+          metadata: JSON.stringify({}),
+          occurredAt: new Date().toISOString(),
+        });
+        await harness.insert({
+          type: "thing.happened",
+          payload: JSON.stringify({ n: 2 }),
+          metadata: JSON.stringify({}),
+          occurredAt: new Date().toISOString(),
+        });
+        const bus = new RecordingBus();
+        const relay = createOutboxRelay({ db: harness.db, bus });
+        const dispatched = await relay.drainOnce();
+        assert(dispatched === 2, "both pending rows dispatched");
+        assert(
+          bus.messages.map((m) => (m.payload as { n: number }).n).join(",") ===
+            "1,2",
+          "rows dispatched in insertion order",
+        );
+      },
+    },
+    {
+      name: "marks rows dispatched so a second drain re-publishes nothing",
+      async run(factory) {
+        const harness = await factory();
+        await harness.insert({
+          type: "once.only",
+          payload: JSON.stringify({}),
+          metadata: JSON.stringify({}),
+          occurredAt: new Date().toISOString(),
+        });
+        const bus = new RecordingBus();
+        const relay = createOutboxRelay({ db: harness.db, bus });
+        assert((await relay.drainOnce()) === 1, "first drain dispatches");
+        assert((await relay.drainOnce()) === 0, "second drain is a no-op");
+        assert(bus.messages.length === 1, "row published exactly once");
+      },
+    },
+  ];
+
+/** Run outbox-relay scenarios against a harness factory. */
+export async function assertOutboxRelayConformance(
+  factory: OutboxRelayHarnessFactory,
+  scenarios: readonly OutboxRelayConformanceScenario[] = STANDARD_OUTBOX_RELAY_SCENARIOS,
+): Promise<void> {
+  for (const scenario of scenarios) {
+    try {
+      await scenario.run(factory);
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Outbox scenario "${scenario.name}" failed: ${reason}`, {
+        cause,
+      });
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Job store conformance                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Returns a fresh {@link JobStore} per scenario run. */
+export type JobStoreFactory = () => JobStore | Promise<JobStore>;
+
+/** A single job-store conformance scenario. */
+export interface JobStoreConformanceScenario {
+  readonly name: string;
+  run(factory: JobStoreFactory): Promise<void>;
+}
+
+/** Scenarios that hold for every well-formed {@link JobStore}. */
+export const STANDARD_JOB_STORE_SCENARIOS: readonly JobStoreConformanceScenario[] =
+  [
+    {
+      name: "runs an enqueued job exactly once",
+      async run(factory) {
+        const store = await factory();
+        const queue = createJobQueue({ store });
+        const seen: unknown[] = [];
+        const worker = createWorker({
+          store,
+          pollIntervalMs: 5,
+          handler: (job) => {
+            seen.push(job.payload);
+          },
+        });
+        await worker.start();
+        await queue.enqueue("conformance.job", { ok: true });
+        await waitFor(() => seen.length === 1, "job ran");
+        await worker.stop();
+        assert(seen.length === 1, "handler ran exactly once");
+        assert((await store.size()) === 0, "completed job removed");
+      },
+    },
+    {
+      name: "claims a job once across concurrent workers",
+      async run(factory) {
+        const store = await factory();
+        const queue = createJobQueue({ store });
+        const counts = new Map<number, number>();
+        const worker = createWorker({
+          store,
+          concurrency: 4,
+          pollIntervalMs: 2,
+          handler: (job) => {
+            const id = (job.payload as { id: number }).id;
+            counts.set(id, (counts.get(id) ?? 0) + 1);
+          },
+        });
+        await worker.start();
+        for (let i = 0; i < 10; i += 1) await queue.enqueue("c", { id: i });
+        await waitFor(() => counts.size === 10, "all jobs ran", 3_000);
+        await worker.stop();
+        assert(counts.size === 10, "every job ran");
+        for (const n of counts.values()) {
+          assert(n === 1, "no job ran more than once");
+        }
+      },
+    },
+    {
+      name: "dead-letters a job once its attempts are exhausted",
+      async run(factory) {
+        const store = await factory();
+        const queue = createJobQueue({ store });
+        const deadLetter = inMemoryDeadLetterStore();
+        let attempts = 0;
+        const worker = createWorker({
+          store,
+          deadLetter,
+          pollIntervalMs: 5,
+          backoff: () => 0,
+          handler: () => {
+            attempts += 1;
+            throw new Error("always fails");
+          },
+        });
+        await worker.start();
+        await queue.enqueue("poison", {}, { maxAttempts: 3 });
+        await waitFor(
+          async () => (await deadLetter.list()).length === 1,
+          "job dead-lettered",
+          3_000,
+        );
+        await worker.stop();
+        assert(attempts === 3, "ran for every bounded attempt");
+        assert((await store.size()) === 0, "exhausted job removed");
+      },
+    },
+  ];
+
+/** Run job-store scenarios against a store factory. */
+export async function assertJobStoreConformance(
+  factory: JobStoreFactory,
+  scenarios: readonly JobStoreConformanceScenario[] = STANDARD_JOB_STORE_SCENARIOS,
+): Promise<void> {
+  for (const scenario of scenarios) {
+    try {
+      await scenario.run(factory);
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Job scenario "${scenario.name}" failed: ${reason}`, {
         cause,
       });
     }

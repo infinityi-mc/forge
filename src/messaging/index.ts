@@ -10,9 +10,12 @@
  * PR B adds the reliability surface: idempotent consumption via an
  * {@link InboxStore} (`forge/messaging/inbox`), bounded retry consumed
  * structurally from `forge/resilience`, and {@link DeadLetterStore}
- * dead-lettering with redrive (`forge/messaging/deadletter`). The
- * `forge/data` outbox relay + durable transports + background jobs
- * (PR C) build on these contracts.
+ * dead-lettering with redrive (`forge/messaging/deadletter`).
+ *
+ * PR C adds the durable/at-scale surface: the `forge/data` outbox relay
+ * (`forge/messaging/outbox`), a durable `sqliteTransport` and
+ * `postgresTransport` (`forge/messaging/transports/{sqlite,postgres}`),
+ * and background jobs (`forge/messaging/jobs`).
  *
  * Transports live behind their own entrypoint, e.g.
  * `forge/messaging/transports/memory`; stores behind
@@ -47,8 +50,10 @@ export type { Codec } from "./codec";
 export {
   HandlerError,
   IdempotencyError,
+  JobError,
   MessageDroppedError,
   MessagingError,
+  OutboxRelayError,
   SerializationError,
   TransportError,
 } from "./errors";

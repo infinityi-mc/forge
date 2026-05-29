@@ -7,9 +7,9 @@
  *
  * PR A ships the errors reachable from the publish / consume path
  * ({@link TransportError}, {@link SerializationError},
- * {@link HandlerError}). The dead-letter, outbox, idempotency, and job
- * errors named in the module spec arrive with the PRs that introduce
- * those features.
+ * {@link HandlerError}). PR B adds {@link MessageDroppedError} and
+ * {@link IdempotencyError}; PR C adds {@link OutboxRelayError} and
+ * {@link JobError} for the outbox relay and background-job surfaces.
  *
  * @module
  */
@@ -113,5 +113,45 @@ export class IdempotencyError extends MessagingError {
     super(message, options);
     this.name = "IdempotencyError";
     if (options?.key !== undefined) this.key = options.key;
+  }
+}
+
+/**
+ * The outbox relay failed to read its source table, publish a row, or
+ * mark a row dispatched. The originating failure is preserved on
+ * `cause`. The relay logs and retries on its next poll rather than
+ * surfacing this to a caller.
+ */
+export class OutboxRelayError extends MessagingError {
+  /** The outbox table involved, when known. */
+  readonly table?: string;
+
+  constructor(message: string, options?: ErrorOptions & { table?: string }) {
+    super(message, options);
+    this.name = "OutboxRelayError";
+    if (options?.table !== undefined) this.table = options.table;
+  }
+}
+
+/**
+ * A background job failed to execute. Wraps the originating handler
+ * throw on `cause`; the worker reuses the same retry → dead-letter
+ * machinery as consumers, so an exhausted job is parked rather than
+ * surfaced to the enqueuer.
+ */
+export class JobError extends MessagingError {
+  /** The id of the job that failed, when known. */
+  readonly jobId?: string;
+  /** The job name / type, when known. */
+  readonly jobName?: string;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { jobId?: string; jobName?: string },
+  ) {
+    super(message, options);
+    this.name = "JobError";
+    if (options?.jobId !== undefined) this.jobId = options.jobId;
+    if (options?.jobName !== undefined) this.jobName = options.jobName;
   }
 }
