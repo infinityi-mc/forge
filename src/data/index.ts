@@ -10,6 +10,7 @@
 
 export { createDb } from "./db";
 export { expectUpdated } from "./concurrency";
+export { createMigrationSource, migrate } from "./migrations";
 export { createPool } from "./pool";
 export { raw, sql } from "./sql";
 export type { SqlFragment } from "./sql";
@@ -59,6 +60,14 @@ export type {
   UpdateQueryBuilder,
   UpdateType,
 } from "./types";
+export type {
+  MigrateOptions,
+  MigrateResult,
+  Migration,
+  MigrationDirection,
+  MigrationSource,
+  MigrationState,
+} from "./migrations";
 export type {
   Pool,
   PoolLease,

@@ -37,6 +37,14 @@ an explicit database handle.
 - `expectUpdated()` optimistic concurrency helper backed by
   `ConcurrencyError`.
 
+## Shipped in PR D
+
+- `migrate()` and `createMigrationSource()` for ordered code migrations,
+  state tracking, dry runs, and explicit down migrations.
+- `forge/data/schema` helpers for focused migration DDL builders.
+- `forge/data/testing` helpers for SQLite test databases, rollback
+  fixtures, recording drivers, and driver conformance scenarios.
+
 ## Quick Start
 
 ```ts
