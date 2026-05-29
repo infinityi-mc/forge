@@ -120,6 +120,32 @@ describe("boot — metric surface", () => {
     await app.stop();
     expect(exitCodes).toEqual([0]);
   });
+
+  test("does not emit ready if a signal starts shutdown during boot", async () => {
+    const { meter, records } = recordingMeter();
+    const exitCodes: number[] = [];
+    const signal = "SIGUSR1" as NodeJS.Signals;
+    const app = await boot({
+      components: [
+        {
+          name: "signal",
+          start() {
+            process.emit(signal);
+          },
+        },
+      ],
+      installSignals: true,
+      signals: [signal],
+      exit: (code) => exitCodes.push(code),
+      telemetry: { meter },
+    });
+
+    await app.done;
+
+    expect(app.ready).toBe(false);
+    expect(exitCodes).toEqual([0]);
+    expect(records.filter((r) => r.name === "lifecycle.ready")).toEqual([]);
+  });
 });
 
 describe("withSpan", () => {

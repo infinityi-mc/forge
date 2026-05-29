@@ -206,9 +206,11 @@ export async function boot(options: BootOptions): Promise<Application> {
     }
   });
 
-  ready = true;
-  metrics.ready.add(1);
-  readyEmitted = true;
+  if (!shutdownPromise) {
+    ready = true;
+    metrics.ready.add(1);
+    readyEmitted = true;
+  }
   metrics.bootDuration.record(now() - bootPerfStartedAt);
   logger.info("lifecycle.boot.done", {
     durationMs: clock.now() - bootStartedAt,
