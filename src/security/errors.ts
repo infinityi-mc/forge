@@ -20,6 +20,14 @@ export class AuthenticationError extends SecurityError {
   }
 }
 
+/** A trusted principal was authenticated, but policy denied the requested action. */
+export class AuthorizationError extends SecurityError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AuthorizationError";
+  }
+}
+
 /** The token's `exp` claim is outside the accepted clock tolerance. */
 export class TokenExpiredError extends AuthenticationError {
   constructor(message: string, options?: ErrorOptions) {
@@ -59,4 +67,3 @@ export class KeyResolutionError extends SecurityError {
     this.name = "KeyResolutionError";
   }
 }
-

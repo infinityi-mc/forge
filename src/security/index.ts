@@ -14,6 +14,7 @@ export type {
 export {
   AlgorithmNotAllowedError,
   AuthenticationError,
+  AuthorizationError,
   KeyResolutionError,
   SecurityError,
   TokenClaimError,
@@ -21,13 +22,48 @@ export {
   TokenInvalidError,
 } from "./errors";
 
-export { createJwtVerifier } from "./jwt";
+export {
+  apiKeyFingerprint,
+  createApiKeyVerifier,
+  createJwtVerifier,
+} from "./jwt";
 export type {
+  ApiKeyLookupResult,
+  ApiKeyVerifierOptions,
   ClaimMapping,
   JwtHeader,
   JwtVerifierOptions,
   JwsAlgorithm,
 } from "./jwt";
+
+export {
+  allow,
+  allOf,
+  anyOf,
+  authorize,
+  deny,
+  not,
+  requireRole,
+  requireScope,
+  requireTenant,
+} from "./authz";
+export type {
+  AuthzContext,
+  Decision,
+  Policy,
+} from "./authz";
+
+export {
+  authenticate,
+  authorizeRoute,
+} from "./http";
+export type {
+  AuthenticateOptions,
+  AuthorizeRouteOptions,
+  HeadersLike,
+  NextFunction,
+  SecurityHttpRequest,
+} from "./http";
 
 export {
   createJwksKeyStore,
@@ -43,4 +79,3 @@ export type {
   KeyStore,
   PipelineLike,
 } from "./jwks";
-
