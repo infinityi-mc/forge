@@ -140,6 +140,28 @@ describe("cors", () => {
     expect(res.headers.get("access-control-max-age")).toBe("600");
   });
 
+  test("echoes the request origin (not *) when credentials are enabled with origin '*'", async () => {
+    const router = createRouter()
+      .use(cors({ origin: "*", credentials: true }))
+      .get("/", () => new Response("ok"));
+    const res = await testClient(router).get("/", {
+      headers: { origin: "https://app.test" },
+    });
+    // Per Fetch §3.2.5, ACAO must not be "*" alongside credentials.
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.test");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+  });
+
+  test("keeps '*' for origin '*' without credentials", async () => {
+    const router = createRouter()
+      .use(cors({ origin: "*" }))
+      .get("/", () => new Response("ok"));
+    const res = await testClient(router).get("/", {
+      headers: { origin: "https://app.test" },
+    });
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
   test("adds ACAO on a normal response and omits it for disallowed origins", async () => {
     const router = createRouter()
       .use(cors({ origin: ["https://app.test"] }))

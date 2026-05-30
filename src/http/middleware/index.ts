@@ -123,7 +123,7 @@ export function cors(options: CorsOptions = {}): Middleware {
       // Preflight: an OPTIONS carrying Access-Control-Request-Method.
       if (req.method === "OPTIONS" && req.headers.has("access-control-request-method")) {
         const headers = new Headers({ "access-control-allow-methods": methods });
-        applyOrigin(headers, allowed, options.credentials);
+        applyOrigin(headers, allowed, requestOrigin, options.credentials);
         const reqHeaders =
           options.allowedHeaders?.join(", ") ??
           req.headers.get("access-control-request-headers") ??
@@ -137,7 +137,7 @@ export function cors(options: CorsOptions = {}): Middleware {
       }
 
       const res = await next(req);
-      applyOrigin(res.headers, allowed, options.credentials);
+      applyOrigin(res.headers, allowed, requestOrigin, options.credentials);
       if (options.exposedHeaders?.length) {
         res.headers.set("access-control-expose-headers", options.exposedHeaders.join(", "));
       }
@@ -159,9 +159,18 @@ function originResolver(
   return (o) => (o === only ? o : undefined);
 }
 
-function applyOrigin(headers: Headers, allowed: string | undefined, credentials?: boolean): void {
+function applyOrigin(
+  headers: Headers,
+  allowed: string | undefined,
+  requestOrigin: string | null,
+  credentials?: boolean,
+): void {
   if (allowed === undefined) return;
-  headers.set("access-control-allow-origin", allowed);
+  // Per the Fetch Standard §3.2.5, `Access-Control-Allow-Origin` must not be
+  // `*` when credentials are allowed — browsers reject the response. Echo the
+  // concrete request Origin instead (kept cacheable as `*` otherwise).
+  const value = credentials && allowed === "*" && requestOrigin ? requestOrigin : allowed;
+  headers.set("access-control-allow-origin", value);
   if (credentials) headers.set("access-control-allow-credentials", "true");
 }
 
