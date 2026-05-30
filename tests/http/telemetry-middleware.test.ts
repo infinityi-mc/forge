@@ -52,6 +52,24 @@ describe("telemetryMiddleware", () => {
     expect(point.attributes["http.response.status_code"]).toBe(200);
   });
 
+  test("http.server.active_requests nets back to zero after a request (UpDownCounter)", async () => {
+    const telemetry = createTestTelemetry();
+    const router = createRouter()
+      .use(telemetryMiddleware({ telemetry: { meter: telemetry.meter } }))
+      .get("/", () => new Response("ok"));
+    await testClient(router).get("/");
+    await telemetry.flushAll();
+
+    const metrics = telemetry.batches.flatMap((b) => b.metrics);
+    const active = metrics.find((m) => m.descriptor.name === "http.server.active_requests");
+    expect(active).toBeDefined();
+    const total = active!.points.reduce(
+      (sum, p) => sum + (p as { value: number }).value,
+      0,
+    );
+    expect(total).toBe(0);
+  });
+
   test("marks a 5xx span as error", async () => {
     const telemetry = createTestTelemetry();
     const router = createRouter()

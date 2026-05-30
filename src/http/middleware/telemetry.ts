@@ -38,7 +38,9 @@ export function telemetryMiddleware(
     description: "Duration of inbound HTTP server requests.",
     unit: "s",
   });
-  const active = meter?.createCounter(ACTIVE, {
+  // UpDownCounter (not Counter): in-flight count must decrement on completion;
+  // a monotonic Counter silently drops the `add(-1)` below.
+  const active = meter?.createUpDownCounter(ACTIVE, {
     description: "In-flight inbound HTTP server requests.",
   });
 
