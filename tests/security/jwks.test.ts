@@ -18,6 +18,40 @@ describe("security JWKS key stores", () => {
     );
   });
 
+  test("staticKeyStore ignores JWKs that are not allowed for signature verification", async () => {
+    const signed = await signTestJwt();
+    const [jwk] = signed.jwks!.keys;
+    expect(jwk).toBeDefined();
+
+    const encryptionUseStore = staticKeyStore({
+      keys: [{ ...jwk!, use: "enc" }],
+    });
+    await expect(encryptionUseStore.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+
+    const encryptionOpsStore = staticKeyStore({
+      keys: [{ ...jwk!, key_ops: ["encrypt"] }],
+    });
+    await expect(encryptionOpsStore.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+
+    const verifyOpsStore = staticKeyStore({
+      keys: [{ ...jwk!, key_ops: ["verify"] }],
+    });
+    await expect(verifyOpsStore.resolve(signed.kid, "RS256")).resolves.toBeInstanceOf(
+      CryptoKey,
+    );
+
+    const mixedStore = staticKeyStore({
+      keys: [{ ...jwk!, use: "enc" }, jwk!],
+    });
+    await expect(mixedStore.resolve(signed.kid, "RS256")).resolves.toBeInstanceOf(
+      CryptoKey,
+    );
+  });
+
   test("createJwksKeyStore caches keys and coordinates unknown-kid refetch", async () => {
     const first = await signTestJwt({ kid: "kid-1" });
     const second = await signTestJwt({ kid: "kid-2" });
@@ -57,4 +91,3 @@ describe("security JWKS key stores", () => {
     });
   });
 });
-

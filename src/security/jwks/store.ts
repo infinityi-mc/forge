@@ -194,7 +194,16 @@ function maybeFindJwk(
   const candidates = kid === undefined
     ? jwks.keys
     : jwks.keys.filter((key) => key.kid === kid);
-  return candidates.find((key) => key.alg === undefined || key.alg === alg);
+  return candidates.find((key) =>
+    (key.alg === undefined || key.alg === alg) &&
+    (key.use === undefined || key.use === "sig") &&
+    keyOpsAllowVerify(key)
+  );
+}
+
+function keyOpsAllowVerify(jwk: JsonWebKey): boolean {
+  if (jwk.key_ops === undefined) return true;
+  return Array.isArray(jwk.key_ops) && jwk.key_ops.includes("verify");
 }
 
 function cacheKey(jwk: JsonWebKey, alg: JwsAlgorithm): string {
