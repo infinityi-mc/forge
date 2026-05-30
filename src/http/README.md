@@ -79,9 +79,39 @@ await server.stop();
 
 ---
 
-## Coming next
+## Shipped in PR C — typed routes & OpenAPI 3.1
 
-- **PR C — typed routes & OpenAPI**: schema-validated routes (`validate()` + `ValidationError`) and OpenAPI 3.1 generation (`OpenApiError`), plus the `forge/lifecycle` server component.
+```ts
+import { createRouter, serve } from "forge/http/server";
+import { problemDetails } from "forge/http/middleware";
+import { buildOpenApi, serveOpenApi, problemSchema } from "forge/http/openapi";
+
+// `schema` is any structural validator: `parse(input) => T` (+ optional
+// `toJsonSchema()`). Zod's `ZodType`, a Valibot wrapper, etc. all satisfy it.
+const router = createRouter()
+  .use(problemDetails())
+  .route({
+    method: "POST",
+    path: "/orders",
+    summary: "Create an order",
+    request: { body: CreateOrder },            // validated → typed `locals.body`
+    responses: { 201: { body: Order }, 422: problemSchema() },
+    handler: (req) => Response.json(create(req.locals.body), { status: 201 }),
+  });
+
+// One walk of the router → an OpenAPI 3.1 document; serve it as JSON.
+const doc = buildOpenApi(router, { info: { title: "Orders", version: "1.0.0" } });
+router.use(serveOpenApi({ doc })); // GET /openapi.json
+
+const server = serve(router, { port: 3000 });
+```
+
+1. **`router.route(def)`** (`forge/http/server`) — a schema-described route: `{ method, path, summary?, description?, tags?, operationId?, request?, responses?, middleware?, handler }`. When `request` is present a `validate()` is **prepended automatically**, and the handler's `locals` are **typed** (`locals.body`/`query`/`params` inferred from the schemas). The `request.body` schema is the single source of truth — the same object validates inbound requests and is emitted as the OpenAPI `requestBody` schema, so the two cannot drift.
+2. **`validate({ body?, query?, params? })`** (`forge/http/middleware`) — validates each part against a structural **`Schema<T>`** (`parse(input): T`, optional `toJsonSchema()`), storing the typed result on `locals`. A failed `parse()` is wrapped in a **`ValidationError`** carrying the validator's per-field issues (`.issues`/`.errors`), which `problemDetails()` renders as `422` with an `errors` extension. The request body is memoized so `validate()` and the handler can both read it.
+3. **`buildOpenApi(router, { info, servers?, openapi? })`** (`forge/http/openapi`) — walks every `route()` (mounted routes re-homed under their prefix) and returns a plain **OpenAPI 3.1** object: `:param` → `{param}` templating, path params + query params (expanded from the query schema's object properties), `requestBody`, and `responses`. Invalid metadata (missing `info.title`/`version`, a duplicate operation) throws an **`OpenApiError`** synchronously — fail-fast at build, not on first request.
+4. **`serveOpenApi({ doc, path? })`** — middleware that serves the document as JSON at `path` (default `/openapi.json`) for `GET`/`HEAD`, delegating everything else.
+5. **`problemSchema(description?)`** — the RFC 7807 schema as a ready-to-use response entry (`application/problem+json`), so error contracts are documented as first-class citizens rather than implied.
+6. **`forge/lifecycle` integration** — an `HttpServer` from `serve()` already satisfies lifecycle's structural `HttpServerLike`, so `httpServerComponent("http", server)` (`forge/lifecycle/adapters`) drives its graceful `stop()` during ordered shutdown with **zero `forge/http` changes**.
 
 ---
 

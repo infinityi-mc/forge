@@ -18,10 +18,17 @@
  */
 
 import { RouteConflictError } from "../errors";
+import { validate } from "../middleware";
 import type { Handler, Middleware, RouteHandlers } from "../types";
 import { createHttpRequest } from "./request";
 import { compose } from "./compose";
-import type { Router, RouterOptions } from "./types";
+import type {
+  RouteDef,
+  RouteMeta,
+  RouteRequest,
+  Router,
+  RouterOptions,
+} from "./types";
 
 interface TrieNode {
   /** Static segment → child. */
@@ -107,6 +114,11 @@ function decode(segment: string): string {
 export function createRouter(options: RouterOptions = {}): Router {
   const root = newNode();
   const useMiddleware: Middleware[] = [];
+  const routeMeta: RouteMeta[] = [];
+
+  function hasRequestSchema(request?: RouteRequest): boolean {
+    return !!request && (!!request.body || !!request.query || !!request.params);
+  }
 
   function register(method: string, path: string, handlers: RouteHandlers): void {
     const upper = method.toUpperCase();
@@ -182,6 +194,25 @@ export function createRouter(options: RouterOptions = {}): Router {
       register(method, path, handlers);
       return router;
     },
+    route(def: RouteDef) {
+      const chain: Middleware[] = [];
+      if (hasRequestSchema(def.request)) chain.push(validate(def.request!));
+      if (def.middleware) chain.push(...def.middleware);
+      // The typed handler's `locals` is populated by the prepended validate();
+      // erase the brand to fit the structural Handler at the registration seam.
+      register(def.method, def.path, [...chain, def.handler as Handler]);
+      routeMeta.push({
+        method: def.method.toUpperCase(),
+        path: def.path,
+        ...(def.summary !== undefined ? { summary: def.summary } : {}),
+        ...(def.description !== undefined ? { description: def.description } : {}),
+        ...(def.tags !== undefined ? { tags: def.tags } : {}),
+        ...(def.operationId !== undefined ? { operationId: def.operationId } : {}),
+        ...(def.request !== undefined ? { request: def.request } : {}),
+        ...(def.responses !== undefined ? { responses: def.responses } : {}),
+      });
+      return router;
+    },
     get(path, ...handlers) {
       return router.on("GET", path, ...handlers);
     },
@@ -205,6 +236,11 @@ export function createRouter(options: RouterOptions = {}): Router {
       for (const route of exportRoutes(sub)) {
         register(route.method, joinPath(prefix, route.path), [route.handler]);
       }
+      // Re-home the sub-router's OpenAPI metadata under the prefix so a
+      // mounted route is still documented at its absolute path.
+      for (const meta of exportMeta(sub)) {
+        routeMeta.push({ ...meta, path: joinPath(prefix, meta.path) });
+      }
       return router;
     },
     handler() {
@@ -220,12 +256,20 @@ export function createRouter(options: RouterOptions = {}): Router {
     value: (): ExportedRoute[] => collectRoutes(root, useMiddleware),
   });
 
+  // Internal: expose the OpenAPI metadata recorded by `route()` so a parent
+  // router (`mount`) and `buildOpenApi` can read it.
+  Object.defineProperty(router, OPENAPI, {
+    enumerable: false,
+    value: (): readonly RouteMeta[] => routeMeta,
+  });
+
   return router;
 }
 
-// --- mount support -------------------------------------------------------
+// --- mount + OpenAPI support ---------------------------------------------
 
 const ROUTES = Symbol("forge.http.router.routes");
+const OPENAPI = Symbol("forge.http.router.openapi");
 
 interface ExportedRoute {
   readonly method: string;
@@ -239,6 +283,20 @@ function exportRoutes(sub: Router): ExportedRoute[] {
     throw new RouteConflictError("mount() expects a forge/http Router");
   }
   return (fn as () => ExportedRoute[])();
+}
+
+function exportMeta(sub: Router): readonly RouteMeta[] {
+  const fn = (sub as unknown as Record<symbol, unknown>)[OPENAPI];
+  return typeof fn === "function" ? (fn as () => readonly RouteMeta[])() : [];
+}
+
+/**
+ * Read the OpenAPI metadata recorded by {@link Router.route} (in declaration
+ * order, mounted routes re-homed under their prefix). Returns `[]` for a
+ * router built without `route()`. Consumed by `buildOpenApi`.
+ */
+export function routeMetadata(router: Router): readonly RouteMeta[] {
+  return exportMeta(router);
 }
 
 /** Walk the trie, rebuilding each route's pattern + handler (sub `use` folded). */
