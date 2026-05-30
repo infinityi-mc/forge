@@ -41,6 +41,12 @@ describe("ProblemError", () => {
     expect(err.status).toBe(404);
   });
 
+  test("constructor status wins over a stray status extension member", () => {
+    const err = problem.badRequest("oops", { status: 999 });
+    expect(err.status).toBe(400);
+    expect(err.problem.status).toBe(400);
+  });
+
   test("toResponse() renders application/problem+json with the status", async () => {
     const err = problem.unprocessable("bad", { errors: [{ field: "amount" }] });
     const res = err.toResponse();

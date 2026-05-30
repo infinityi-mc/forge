@@ -31,9 +31,11 @@ export {
 type Extensions = Record<string, unknown>;
 
 function make(status: number, detail?: string, ext?: Extensions): ProblemError {
+  // `...ext` first so extension members can never override the
+  // constructor's intended status (mirrors `normalizeProblem`).
   return new ProblemError({
-    status,
     ...ext,
+    status,
     ...(detail !== undefined ? { detail } : {}),
   });
 }
