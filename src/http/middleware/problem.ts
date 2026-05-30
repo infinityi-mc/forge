@@ -1,0 +1,91 @@
+/**
+ * `problemDetails()` — the error boundary that makes RFC 7807 the *only*
+ * way errors leave the server.
+ *
+ * Mounted near the top of the stack so everything below it is covered: it
+ * runs `next`, and on a thrown error renders an `application/problem+json`
+ * {@link Response}. Known errors map to sensible statuses **without leaking
+ * internals**; anything unmapped becomes a generic `500` whose `detail` is
+ * omitted (the full error goes to the injected `logger`/telemetry, never the
+ * wire).
+ *
+ * Forge errors are matched **structurally** (by class where imported, else
+ * by `name`/shape) so this stays free of a hard `forge/resilience` import:
+ *
+ * | Error | Status | Notes |
+ * | :-- | :-- | :-- |
+ * | `ProblemError` | its own | rendered verbatim (extensions preserved) |
+ * | `ValidationError` | `422` | `errors[]` extension when present |
+ * | `RateLimitError` | `429` | `Retry-After` from `retryAfterMs` |
+ * | `CircuitOpenError` | `503` | dependency unavailable |
+ * | _anything else_ | `500` | no `detail`; logged, not leaked |
+ *
+ * @module
+ */
+
+import { ProblemError, ValidationError } from "../errors";
+import { renderProblem } from "../problem/render";
+import type { Logger } from "../observability";
+import type { Handler, Middleware } from "../types";
+
+/** Options for {@link problemDetails}. */
+export interface ProblemDetailsOptions {
+  /** Logger for unmapped 5xx errors (full error/stack stays here, off the wire). */
+  readonly logger?: Logger;
+  /**
+   * Escape hatch: map a thrown value to a problem before the built-in
+   * mapping runs. Return `undefined` to fall through to the defaults.
+   */
+  readonly map?: (error: unknown) => Response | undefined;
+}
+
+/** Catch thrown errors below this middleware and render RFC 7807. */
+export function problemDetails(options: ProblemDetailsOptions = {}): Middleware {
+  return (next: Handler): Handler =>
+    async (req) => {
+      try {
+        return await next(req);
+      } catch (error) {
+        const custom = options.map?.(error);
+        if (custom) return custom;
+        return renderError(error, options.logger);
+      }
+    };
+}
+
+function renderError(error: unknown, logger?: Logger): Response {
+  if (error instanceof ProblemError) {
+    return error.toResponse();
+  }
+
+  if (error instanceof ValidationError) {
+    const errors = (error as { errors?: unknown }).errors;
+    return renderProblem({
+      status: 422,
+      detail: error.message,
+      ...(errors !== undefined ? { errors } : {}),
+    });
+  }
+
+  // Structural mapping for forge/resilience errors (no hard import).
+  const name = error instanceof Error ? error.name : "";
+  if (name === "RateLimitError") {
+    const res = renderProblem({ status: 429, detail: "Rate limit exceeded" });
+    const retryAfterMs = (error as { retryAfterMs?: number }).retryAfterMs;
+    if (typeof retryAfterMs === "number" && retryAfterMs >= 0) {
+      res.headers.set("retry-after", String(Math.ceil(retryAfterMs / 1000)));
+    }
+    return res;
+  }
+  if (name === "CircuitOpenError") {
+    return renderProblem({ status: 503, detail: "Dependency unavailable" });
+  }
+
+  // Unmapped: generic 500 with no detail. The real error is logged, never
+  // serialized to the client.
+  logger?.error("unhandled error in request handler", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  return renderProblem({ status: 500 });
+}

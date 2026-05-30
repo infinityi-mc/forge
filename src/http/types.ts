@@ -2,9 +2,9 @@
  * Shared types for `forge/http`.
  *
  * PR A populates the client-facing primitives (`FetchLike`,
- * `ProblemDetails`, client request/response shapes). The server-facing
- * contracts (`HttpRequest`, `Handler`, `Middleware`, `Router`) land in
- * PR B alongside the router.
+ * `ProblemDetails`, client request/response shapes). PR B adds the
+ * server-facing contracts (`HttpRequest`, `Handler`, `Middleware`); the
+ * `Router` surface lives in `server/types.ts`.
  *
  * @module
  */
@@ -82,3 +82,56 @@ export interface HttpResponse<T> {
   /** Escape hatch to the underlying web {@link Response}. */
   readonly raw: Response;
 }
+
+// ---------------------------------------------------------------------------
+// Server-facing contracts (PR B)
+// ---------------------------------------------------------------------------
+
+/**
+ * The request a server {@link Handler} sees — a thin, ergonomic view over
+ * the native web {@link Request}. We never replace the standard object;
+ * `raw` is always available as the escape hatch.
+ */
+export interface HttpRequest {
+  /** The native Bun/web {@link Request}. */
+  readonly raw: Request;
+  /** HTTP method, upper-cased. */
+  readonly method: string;
+  /** Parsed request {@link URL}. */
+  readonly url: URL;
+  /** Matched path parameters (e.g. `/users/:id` → `{ id }`). */
+  readonly params: Readonly<Record<string, string>>;
+  /** Query string parameters. */
+  readonly query: URLSearchParams;
+  /** Request headers. */
+  readonly headers: Headers;
+  /** Parse the body as JSON. */
+  json<T = unknown>(): Promise<T>;
+  /** Read the body as text. */
+  text(): Promise<string>;
+  /** Per-request scratch space for middleware (e.g. an auth principal). */
+  readonly locals: Record<string, unknown>;
+  /** Aborted when the client disconnects or the server shuts down. */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * A request handler. Returns a native {@link Response} (sync or async).
+ */
+export type Handler = (req: HttpRequest) => Promise<Response> | Response;
+
+/**
+ * Middleware wraps a `next` handler and returns a new handler — exactly
+ * the way a `forge/resilience` `Policy` wraps the next operation.
+ * Composition is **outermost-first**: the first middleware in the array
+ * sees the request first and the response last.
+ */
+export type Middleware = (next: Handler) => Handler;
+
+/**
+ * One or more middleware followed by a terminal {@link Handler}, as
+ * accepted by the router verb methods (`router.get(path, ...handlers)`).
+ * The last entry is the handler; any earlier entries are route-scoped
+ * middleware.
+ */
+export type RouteHandlers = readonly [...Middleware[], Handler];

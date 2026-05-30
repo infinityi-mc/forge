@@ -1,6 +1,6 @@
 # `forge/http`
 
-The request/response **edge** of a Forge application. One module, two faces over the same primitives: a resilient, traced **client** for calling other services, and (in later PRs) a thin typed **server** over `Bun.serve()`. Errors speak one machine-readable dialect — RFC 7807 *Problem Details* — in both directions.
+The request/response **edge** of a Forge application. One module, two faces over the same primitives: a resilient, traced **client** for calling other services, and a thin typed **server** over `Bun.serve()`. Errors speak one machine-readable dialect — RFC 7807 *Problem Details* — in both directions.
 
 ```ts
 import { createHttpClient } from "forge/http/client";
@@ -42,10 +42,46 @@ It is **not** a generic HTTP framework, a service mesh, or an RPC layer. It is t
 
 ---
 
+## Shipped in PR B — the server face
+
+```ts
+import { createRouter, serve } from "forge/http/server";
+import {
+  requestId, accessLog, problemDetails, cors, bodyLimit, telemetryMiddleware,
+} from "forge/http/middleware";
+
+const router = createRouter()
+  .use(requestId())
+  .use(telemetryMiddleware({ telemetry })) // server span + http.server.* metrics
+  .use(problemDetails({ logger }))         // every error below → RFC 7807
+  .use(cors({ origin: "*" }))
+  .use(bodyLimit({ maxBytes: 1_000_000 }))
+  .get("/orders/:id", (req) => Response.json({ id: req.params.id }))
+  .post("/orders", async (req) => Response.json(await req.json(), { status: 201 }));
+
+const server = serve(router, { port: 3000 });
+// … later, drain in-flight requests:
+await server.stop();
+```
+
+1. **`createRouter(options)`** (`forge/http` · `forge/http/server`) — a **segment-trie** router with path params. Matching prefers a static segment over a `:param` over a trailing `*` wildcard (with backtracking). Duplicate `method`+`pattern` registrations and conflicting param names at the same position throw a **`RouteConflictError` at registration** (Principle 5: fail-fast at boot). Unmatched paths get `404`; a path that matches another method gets `405` + `Allow`. `use()` adds router-wide middleware, `mount(prefix, sub)` nests a sub-router (its own `use` middleware preserved), verb methods accept route-scoped middleware before the handler.
+2. **`serve(router, options)`** (`forge/http/server`) — a thin adapter over `Bun.serve()`. Each native `Request` becomes an ergonomic `HttpRequest` (`params`/`query`/`json()`/`text()`/`locals`/`signal`, native `raw` always reachable). `stop(closeActiveConnections?)` drains in-flight requests by default and is idempotent.
+3. **`compose(middleware, handler)`** — the **outermost-first** fold the whole stack is written against: the first middleware sees the request first and the response last, exactly like a `forge/resilience` pipeline. `Middleware = (next: Handler) => Handler`.
+4. **Built-in middleware** (`forge/http/middleware`) — every export is a factory; none is auto-installed:
+   - `requestId()` — propagate/mint `x-request-id`, expose on `locals.requestId`, echo on the response;
+   - `accessLog({ logger })` — one structured line per request (method, path, status, duration);
+   - `problemDetails({ logger })` — the error boundary: renders `application/problem+json` and **maps Forge errors structurally** (`ProblemError`→its status, `ValidationError`→`422`, `RateLimitError`→`429`+`Retry-After`, `CircuitOpenError`→`503`, everything else→a **leak-free `500`** logged but never serialized);
+   - `cors(options)` — standards-compliant preflight (`204`) + response headers;
+   - `bodyLimit({ maxBytes })` — reject oversized `Content-Length` with a `413` problem;
+   - `telemetryMiddleware({ telemetry })` — the server mirror of `tracedFetch`: **extract** an inbound `traceparent` and start a `server` span as a remote child, plus `http.server.request.duration` / `http.server.active_requests`. Emits nothing unless a handle is injected;
+   - `rateLimit({ limiter })` and `auth({ verifier })` — thin **structural seams** for `forge/resilience` / `forge/security` (a rejection maps cleanly through `problemDetails`).
+5. **`testClient(router)`** (`forge/http/testing`) — an in-process driver (no socket): build a `Request`, get a `Response`, with `get`/`post`/… JSON helpers. Plus `STANDARD_SERVER_SCENARIOS` + `assertServerConformance()` for the framework-agnostic server invariants (compose order + short-circuit, RFC 7807 mapping, inbound-trace continuation, fail-fast conflicts).
+
+---
+
 ## Coming next
 
-- **PR B — the server face**: a thin typed router/handler/middleware layer over `Bun.serve()`, `problemDetails()` error middleware, the in-process `testClient(router)`, and `httpServerComponent` for `forge/lifecycle`.
-- **PR C — typed routes & OpenAPI**: schema-validated routes (`ValidationError`) and OpenAPI generation (`OpenApiError`).
+- **PR C — typed routes & OpenAPI**: schema-validated routes (`validate()` + `ValidationError`) and OpenAPI 3.1 generation (`OpenApiError`), plus the `forge/lifecycle` server component.
 
 ---
 
