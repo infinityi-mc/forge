@@ -255,6 +255,26 @@
       "import": "./dist/messaging/testing/index.js",
       "types": "./dist/messaging/testing/index.d.ts"
     },
+    "./security": {
+      "import": "./dist/security/index.js",
+      "types": "./dist/security/index.d.ts"
+    },
+    "./security/jwt": {
+      "import": "./dist/security/jwt/index.js",
+      "types": "./dist/security/jwt/index.d.ts"
+    },
+    "./security/jwks": {
+      "import": "./dist/security/jwks/index.js",
+      "types": "./dist/security/jwks/index.d.ts"
+    },
+    "./security/errors": {
+      "import": "./dist/security/errors.js",
+      "types": "./dist/security/errors.d.ts"
+    },
+    "./security/testing": {
+      "import": "./dist/security/testing/index.js",
+      "types": "./dist/security/testing/index.d.ts"
+    },
     "./lifecycle": {
       "import": "./dist/lifecycle/index.js",
       "types": "./dist/lifecycle/index.d.ts"
@@ -287,7 +307,7 @@
     "typescript": "^6"
   },
   "scripts": {
-    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts src/resilience/circuit-breaker/index.ts src/resilience/rate-limit/index.ts src/resilience/bulkhead/index.ts src/resilience/fallback/index.ts src/resilience/hedge/index.ts src/config/index.ts src/config/schema/index.ts src/config/sources/index.ts src/config/diagnostics/index.ts src/config/dynamic/index.ts src/config/providers/index.ts src/config/testing/index.ts src/data/index.ts src/data/errors/index.ts src/data/dialects/sqlite/index.ts src/data/dialects/postgres/index.ts src/data/pool/index.ts src/messaging/index.ts src/messaging/errors.ts src/messaging/transports/memory/index.ts src/messaging/transports/sqlite/index.ts src/messaging/transports/postgres/index.ts src/messaging/outbox/index.ts src/messaging/jobs/index.ts src/messaging/inbox/index.ts src/messaging/deadletter/index.ts src/messaging/testing/index.ts src/lifecycle/index.ts src/lifecycle/adapters/index.ts src/lifecycle/errors.ts src/lifecycle/health/index.ts src/lifecycle/signals/index.ts src/lifecycle/testing/index.ts --outdir dist --root src --splitting --target node",
+    "build": "bun build src/index.ts src/telemetry/index.ts src/telemetry/context/index.ts src/telemetry/log/index.ts src/telemetry/log/middleware/index.ts src/telemetry/log/exporters/stdout/index.ts src/telemetry/log/exporters/null/index.ts src/telemetry/log/exporters/recording/index.ts src/telemetry/log/testing/index.ts src/telemetry/meter/index.ts src/telemetry/meter/exporters/stdout/index.ts src/telemetry/meter/exporters/null/index.ts src/telemetry/meter/exporters/recording/index.ts src/telemetry/meter/testing/index.ts src/telemetry/trace/index.ts src/telemetry/trace/exporters/stdout/index.ts src/telemetry/trace/exporters/null/index.ts src/telemetry/trace/exporters/recording/index.ts src/telemetry/trace/testing/index.ts src/telemetry/exporters/otlp-http/index.ts src/telemetry/exporters/prometheus/index.ts src/telemetry/instrumentation/fetch/index.ts src/telemetry/testing/index.ts src/resilience/index.ts src/resilience/testing/index.ts src/resilience/errors.ts src/resilience/circuit-breaker/index.ts src/resilience/rate-limit/index.ts src/resilience/bulkhead/index.ts src/resilience/fallback/index.ts src/resilience/hedge/index.ts src/config/index.ts src/config/schema/index.ts src/config/sources/index.ts src/config/diagnostics/index.ts src/config/dynamic/index.ts src/config/providers/index.ts src/config/testing/index.ts src/data/index.ts src/data/errors/index.ts src/data/dialects/sqlite/index.ts src/data/dialects/postgres/index.ts src/data/pool/index.ts src/messaging/index.ts src/messaging/errors.ts src/messaging/transports/memory/index.ts src/messaging/transports/sqlite/index.ts src/messaging/transports/postgres/index.ts src/messaging/outbox/index.ts src/messaging/jobs/index.ts src/messaging/inbox/index.ts src/messaging/deadletter/index.ts src/messaging/testing/index.ts src/security/index.ts src/security/jwt/index.ts src/security/jwks/index.ts src/security/errors.ts src/security/testing/index.ts src/lifecycle/index.ts src/lifecycle/adapters/index.ts src/lifecycle/errors.ts src/lifecycle/health/index.ts src/lifecycle/signals/index.ts src/lifecycle/testing/index.ts --outdir dist --root src --splitting --target node",
     "check": "tsc --noEmit",
     "test": "bun test"
   }
