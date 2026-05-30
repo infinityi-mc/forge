@@ -54,10 +54,32 @@ export type {
 } from "./authz";
 
 export {
+  auditPrincipal,
+  createAuditRecorder,
+  memoryAuditSink,
+} from "./audit";
+export type {
+  AuditAttributes,
+  AuditEvent,
+  AuditEventInput,
+  AuditEventType,
+  AuditOutcome,
+  AuditPrincipal,
+  AuditRecorder,
+  AuditRecorderOptions,
+  AuditRequestContext,
+  AuditResource,
+  AuditSink,
+  MemoryAuditSink,
+} from "./audit";
+
+export {
   authenticate,
   authorizeRoute,
 } from "./http";
 export type {
+  AuditHttpContext,
+  AuditHttpContextProvider,
   AuthenticateOptions,
   AuthorizeRouteOptions,
   HeadersLike,

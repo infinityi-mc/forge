@@ -18,6 +18,11 @@ import type { JwsAlgorithm } from "../jwt/types";
 import { staticKeyStore } from "../jwks";
 import type { JsonWebKeySet, KeyStore } from "../jwks";
 import type { Principal, TokenVerifier } from "../types";
+import { memoryAuditSink } from "../audit";
+export {
+  memoryAuditSink,
+  type MemoryAuditSink,
+} from "../audit";
 
 export interface FakePrincipalOptions {
   readonly subject?: string;
@@ -162,31 +167,10 @@ export async function signTestJwt(
   };
 }
 
-export interface MemoryAuditSink {
-  readonly events: readonly unknown[];
-  record(event: unknown): void;
-  clear(): void;
-}
-
-export function memoryAuditSink(): MemoryAuditSink {
-  const events: unknown[] = [];
-  return {
-    get events() {
-      return events;
-    },
-    record(event) {
-      events.push(event);
-    },
-    clear() {
-      events.length = 0;
-    },
-  };
-}
-
 export interface TestSecurityHarness {
   readonly principal: Principal;
   readonly verifier: TokenVerifier;
-  readonly audit: MemoryAuditSink;
+  readonly audit: import("../audit").MemoryAuditSink;
 }
 
 export function createTestSecurity(
@@ -207,4 +191,3 @@ export async function tamperJwtPayload(token: string): Promise<string> {
   const alteredPayload = base64UrlEncodeJson({ sub: "tampered" });
   return `${header}.${alteredPayload}.${signature}`;
 }
-

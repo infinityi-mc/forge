@@ -3,6 +3,7 @@ import * as root from "../../src";
 import * as security from "../../src/security";
 import * as errors from "../../src/security/errors";
 import * as authz from "../../src/security/authz";
+import * as audit from "../../src/security/audit";
 import * as http from "../../src/security/http";
 import * as jwks from "../../src/security/jwks";
 import * as jwt from "../../src/security/jwt";
@@ -21,6 +22,10 @@ describe("security exports", () => {
     expect(jwt.apiKeyFingerprint).toBeFunction();
     expect(authz.authorize).toBeFunction();
     expect(authz.requireRole).toBeFunction();
+    expect(audit.createAuditRecorder).toBeFunction();
+    expect(audit.memoryAuditSink).toBeFunction();
+    expect(security.createAuditRecorder).toBeFunction();
+    expect(security.memoryAuditSink).toBeFunction();
     expect(http.authenticate).toBeFunction();
     expect(http.authorizeRoute).toBeFunction();
     expect(jwks.createJwksKeyStore).toBeFunction();

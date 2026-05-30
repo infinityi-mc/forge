@@ -1,6 +1,8 @@
 import { AuthorizationError, TokenInvalidError } from "../errors";
 import { authorize } from "../authz";
 import type { AuthzContext, Policy } from "../authz";
+import { auditPrincipal } from "../audit";
+import type { AuditEventInput, AuditRecorder, AuditResource } from "../audit";
 import type { Principal, TokenVerifier } from "../types";
 
 export interface SecurityHttpRequest {
@@ -15,24 +17,51 @@ export type HeadersLike =
 
 export type NextFunction = () => unknown | Promise<unknown>;
 
+export type AuditHttpContext = Partial<
+  Pick<AuditEventInput, "request" | "attributes" | "resource">
+>;
+
+export type AuditHttpContextProvider =
+  | AuditHttpContext
+  | ((req: SecurityHttpRequest) => AuditHttpContext | Promise<AuditHttpContext>);
+
 export interface AuthenticateOptions {
   readonly verifier: TokenVerifier;
   readonly principalKey?: PropertyKey;
+  readonly audit?: AuditRecorder;
+  readonly auditContext?: AuditHttpContextProvider;
 }
 
 export interface AuthorizeRouteOptions<R = unknown> {
   readonly action?: string;
   readonly resource?: R | ((req: SecurityHttpRequest) => R | Promise<R>);
   readonly principalKey?: PropertyKey;
+  readonly audit?: AuditRecorder;
+  readonly auditContext?: AuditHttpContextProvider;
 }
 
 export function authenticate(options: AuthenticateOptions) {
   const principalKey = options.principalKey ?? "principal";
   return async (req: SecurityHttpRequest, next: NextFunction) => {
-    const token = bearerToken(req);
-    const principal = await options.verifier.verify(token);
-    req.locals ??= {};
-    req.locals[principalKey] = principal;
+    let principal: Principal;
+    try {
+      const token = bearerToken(req);
+      principal = await options.verifier.verify(token);
+      req.locals ??= {};
+      req.locals[principalKey] = principal;
+    } catch (error) {
+      await recordAudit(req, options.audit, options.auditContext, {
+        type: "authentication/failure",
+        outcome: "failure",
+        reason: reasonForError(error),
+      });
+      throw error;
+    }
+    await recordAudit(req, options.audit, options.auditContext, {
+      type: "authentication/success",
+      outcome: "success",
+      principal: auditPrincipal(principal),
+    });
     return next();
   };
 }
@@ -45,6 +74,12 @@ export function authorizeRoute<R = unknown>(
   return async (req: SecurityHttpRequest, next: NextFunction) => {
     const principal = req.locals?.[principalKey];
     if (!isPrincipal(principal)) {
+      await recordAudit(req, options.audit, options.auditContext, {
+        type: "authorization/deny",
+        outcome: "deny",
+        ...(options.action === undefined ? {} : { action: options.action }),
+        reason: "principal_required",
+      });
       throw new AuthorizationError("Principal is required");
     }
 
@@ -58,10 +93,64 @@ export function authorizeRoute<R = unknown>(
     };
     const decision = await authorize(policy, ctx);
     if (decision.effect === "deny") {
+      await recordAudit(req, options.audit, options.auditContext, {
+        type: "authorization/deny",
+        outcome: "deny",
+        principal: auditPrincipal(principal),
+        ...(options.action === undefined ? {} : { action: options.action }),
+        ...auditResource(resource),
+        reason: decision.reason ?? "denied",
+      });
       throw new AuthorizationError(decision.reason ?? "Access denied");
     }
+    await recordAudit(req, options.audit, options.auditContext, {
+      type: "authorization/allow",
+      outcome: "allow",
+      principal: auditPrincipal(principal),
+      ...(options.action === undefined ? {} : { action: options.action }),
+      ...auditResource(resource),
+    });
     return next();
   };
+}
+
+async function recordAudit(
+  req: SecurityHttpRequest,
+  audit: AuditRecorder | undefined,
+  provider: AuditHttpContextProvider | undefined,
+  event: AuditEventInput,
+): Promise<void> {
+  if (audit === undefined) return;
+  try {
+    const context = await auditContext(req, provider);
+    await audit.record({ ...event, ...context });
+  } catch {
+    // Audit is best-effort and must not alter authentication/authorization flow.
+  }
+}
+
+async function auditContext(
+  req: SecurityHttpRequest,
+  provider: AuditHttpContextProvider | undefined,
+): Promise<AuditHttpContext> {
+  if (provider === undefined) return {};
+  return typeof provider === "function" ? await provider(req) : provider;
+}
+
+function auditResource(resource: unknown): { resource?: AuditResource } {
+  if (
+    typeof resource === "string" ||
+    typeof resource === "number" ||
+    typeof resource === "boolean"
+  ) {
+    return { resource };
+  }
+  return {};
+}
+
+function reasonForError(error: unknown): string {
+  if (error instanceof Error && error.message !== "") return error.message;
+  return "unknown";
 }
 
 function bearerToken(req: SecurityHttpRequest): string {
