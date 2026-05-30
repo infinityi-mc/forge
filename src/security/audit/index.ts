@@ -69,9 +69,9 @@ export function createAuditRecorder(
   return {
     async record(input) {
       const event: AuditEvent = Object.freeze({
+        ...input,
         id: idGenerator(),
         timestamp: new Date(clock.now()),
-        ...input,
       });
       try {
         await options.sink.record(event);

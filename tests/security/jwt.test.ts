@@ -59,6 +59,25 @@ describe("createJwtVerifier", () => {
     });
   });
 
+  test("custom scopes claim mapping does not fall back to scp", async () => {
+    const signed = await signTestJwt({
+      claims: {
+        scp: "reports:admin",
+      },
+    });
+    const verifier = createJwtVerifier({
+      keys: { jwks: signed.jwks! },
+      algorithms: ["RS256"],
+      issuer: "https://issuer.test",
+      audience: "api",
+      claimMap: { scopes: "permissions" },
+    });
+
+    await expect(verifier.verify(signed.token)).resolves.toMatchObject({
+      scopes: [],
+    });
+  });
+
   test("fails fast on unsafe or incomplete verifier configuration", async () => {
     const signed = await signTestJwt();
 

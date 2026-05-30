@@ -190,6 +190,9 @@ function claimsToPrincipal(
 
   const rolesClaim = options.claimMap?.roles ?? "roles";
   const scopesClaim = options.claimMap?.scopes ?? "scope";
+  const scopesValue = options.claimMap?.scopes === undefined
+    ? claims[scopesClaim] ?? claims.scp
+    : claims[scopesClaim];
   const tenantClaim = options.claimMap?.tenant;
   const tenant = tenantClaim === undefined
     ? undefined
@@ -200,7 +203,7 @@ function claimsToPrincipal(
     issuer,
     audience,
     roles: stringArrayClaim(claims[rolesClaim]),
-    scopes: scopeClaim(claims[scopesClaim] ?? claims.scp),
+    scopes: scopeClaim(scopesValue),
     ...(tenant === undefined ? {} : { tenant }),
     claims: Object.freeze({ ...claims }),
     issuedAt: new Date((iat ?? 0) * 1000),

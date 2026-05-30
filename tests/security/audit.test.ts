@@ -31,6 +31,27 @@ describe("security audit", () => {
     });
   });
 
+  test("recorder-generated id and timestamp override runtime input fields", async () => {
+    const sink = memoryAuditSink();
+    const recorder = createAuditRecorder({
+      sink,
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: () => "audit_real",
+    });
+
+    await recorder.record({
+      id: "audit_forged",
+      timestamp: new Date(0),
+      type: "authentication/success",
+      outcome: "success",
+    } as any);
+
+    expect(sink.events[0]).toMatchObject({
+      id: "audit_real",
+      timestamp: new Date(1_700_000_000_000),
+    });
+  });
+
   test("memory sink records and clears events", async () => {
     const sink = memoryAuditSink();
     const recorder = createAuditRecorder({
