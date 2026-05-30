@@ -1,10 +1,11 @@
 /**
  * {@link HttpRequest} over a native web {@link Request}.
  *
- * A thin, lazily-evaluated view: `url`/`query` are parsed once, `json()`/
- * `text()` delegate straight to the native body, and `locals` is the
- * mutable per-request bag middleware writes to (e.g. an auth principal).
- * The native object is always reachable via `raw`.
+ * A thin, lazily-evaluated view: `url`/`query` are parsed once, `json()` is
+ * memoized (so `validate()` and the handler can both read the body without
+ * the native stream's single-consume restriction), `text()` delegates to the
+ * native body, and `locals` is the mutable per-request bag middleware writes
+ * to (e.g. an auth principal). The native object is always reachable via `raw`.
  *
  * @module
  */
@@ -18,6 +19,7 @@ export function createHttpRequest(
   signal?: AbortSignal,
 ): HttpRequest {
   const url = new URL(raw.url);
+  let jsonPromise: Promise<unknown> | undefined;
   return {
     raw,
     method: raw.method.toUpperCase(),
@@ -30,7 +32,10 @@ export function createHttpRequest(
     // disconnect); fall back to a never-aborting signal when absent.
     signal: signal ?? raw.signal ?? new AbortController().signal,
     json<T = unknown>(): Promise<T> {
-      return raw.json() as Promise<T>;
+      // Memoize: the native body is a single-use stream, but middleware
+      // (e.g. validate()) and the handler both need to read it.
+      jsonPromise ??= raw.json();
+      return jsonPromise as Promise<T>;
     },
     text(): Promise<string> {
       return raw.text();

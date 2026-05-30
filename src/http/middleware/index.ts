@@ -4,7 +4,8 @@
  * Each export is a **factory** returning a {@link Middleware}; none is
  * auto-installed (Principle 6: explicit wiring only). They compose
  * outermost-first via `forge/http/server`'s `compose`, exactly like a
- * `forge/resilience` pipeline. `validate()` (schema-driven) lands in PR C.
+ * `forge/resilience` pipeline. `validate()` (PR C) drives schema-checked
+ * typed routes and feeds the same schemas to OpenAPI generation.
  *
  * @example
  * ```ts
@@ -19,10 +20,11 @@
  * @module
  */
 
-import { ProblemError } from "../errors";
+import { ProblemError, ValidationError } from "../errors";
 import { renderProblem } from "../problem/render";
 import type { Logger } from "../observability";
 import type { Handler, HttpRequest, Middleware } from "../types";
+import type { Schema } from "../server/types";
 
 export { problemDetails } from "./problem";
 export type { ProblemDetailsOptions } from "./problem";
@@ -243,6 +245,71 @@ export function auth<P = unknown>(options: AuthOptions<P>): Middleware {
       req.locals[into] = principal;
       return next(req);
     };
+}
+
+/** Options for {@link validate}: a {@link Schema} per request part. */
+export interface ValidateOptions {
+  /** Validates the JSON body; the result is stored on `locals.body`. */
+  readonly body?: Schema;
+  /** Validates the query (parsed to a plain object); stored on `locals.query`. */
+  readonly query?: Schema;
+  /** Validates the path params; stored on `locals.params`. */
+  readonly params?: Schema;
+}
+
+/**
+ * Validate request parts against structural {@link Schema}s, populating typed
+ * `locals` (`body`/`query`/`params`). A failed `parse()` is wrapped in a
+ * {@link ValidationError} (→ `422` via `problemDetails`), surfacing the
+ * validator's per-field issues as the RFC 7807 `errors` extension. `route()`
+ * prepends this automatically when a `request` schema set is given.
+ */
+export function validate(options: ValidateOptions): Middleware {
+  return (next: Handler): Handler =>
+    async (req) => {
+      if (options.params) {
+        req.locals.params = run("params", options.params, { ...req.params });
+      }
+      if (options.query) {
+        req.locals.query = run("query", options.query, queryToObject(req.query));
+      }
+      if (options.body) {
+        const raw = await req.json().catch((cause: unknown) => {
+          throw new ValidationError("invalid body: malformed JSON", { cause });
+        });
+        req.locals.body = run("body", options.body, raw);
+      }
+      return next(req);
+    };
+}
+
+/** Run one schema, normalizing any thrown error into a {@link ValidationError}. */
+function run(where: string, schema: Schema, input: unknown): unknown {
+  try {
+    return schema.parse(input);
+  } catch (cause) {
+    throw new ValidationError(`invalid ${where}`, {
+      cause,
+      errors: extractIssues(cause),
+    });
+  }
+}
+
+/** Pull a validator's structured issues (Zod `.issues`, others `.errors`). */
+function extractIssues(cause: unknown): unknown {
+  if (cause !== null && typeof cause === "object") {
+    const obj = cause as { issues?: unknown; errors?: unknown };
+    if (Array.isArray(obj.issues)) return obj.issues;
+    if (Array.isArray(obj.errors)) return obj.errors;
+  }
+  return undefined;
+}
+
+/** Flatten a query string to a plain object (last value wins on repeats). */
+function queryToObject(query: URLSearchParams): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of query) out[key] = value;
+  return out;
 }
 
 function round(ms: number): number {

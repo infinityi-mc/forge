@@ -5,6 +5,7 @@ import * as client from "../../src/http/client";
 import * as server from "../../src/http/server";
 import * as middleware from "../../src/http/middleware";
 import * as problem from "../../src/http/problem";
+import * as openapi from "../../src/http/openapi";
 import * as testing from "../../src/http/testing";
 
 describe("forge/http exports", () => {
@@ -33,12 +34,27 @@ describe("forge/http exports", () => {
     expect(http.telemetryMiddleware).toBeFunction();
   });
 
+  test("http surface exposes typed routes + OpenAPI (PR C)", () => {
+    expect(http.validate).toBeFunction();
+    expect(http.routeMetadata).toBeFunction();
+    expect(http.buildOpenApi).toBeFunction();
+    expect(http.serveOpenApi).toBeFunction();
+    expect(http.problemSchema).toBeFunction();
+    expect(http.OpenApiError).toBeFunction();
+    expect(http.ValidationError).toBeFunction();
+  });
+
   test("subpath entrypoints are populated", () => {
     expect(client.createHttpClient).toBeFunction();
     expect(server.createRouter).toBeFunction();
     expect(server.serve).toBeFunction();
+    expect(server.routeMetadata).toBeFunction();
     expect(middleware.problemDetails).toBeFunction();
     expect(middleware.requestId).toBeFunction();
+    expect(middleware.validate).toBeFunction();
+    expect(openapi.buildOpenApi).toBeFunction();
+    expect(openapi.serveOpenApi).toBeFunction();
+    expect(openapi.problemSchema).toBeFunction();
     expect(problem.problem).toBeObject();
     expect(problem.ProblemError).toBeFunction();
     expect(testing.createMockServer).toBeFunction();

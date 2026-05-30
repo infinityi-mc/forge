@@ -102,11 +102,19 @@ export class RouteConflictError extends HttpError {
   }
 }
 
-/** Server: body/query/params validation failure (PR C). */
+/**
+ * Server: body/query/params validation failure (PR C). `problemDetails()`
+ * renders it as `422`, surfacing {@link errors} as the RFC 7807 `errors`
+ * extension when present (e.g. a validator's per-field issues).
+ */
 export class ValidationError extends HttpError {
-  constructor(message: string, options?: ErrorOptions) {
+  /** Structured per-field issues, surfaced in the `422` problem body. */
+  readonly errors?: unknown;
+
+  constructor(message: string, options?: ErrorOptions & { errors?: unknown }) {
     super(message, options);
     this.name = "ValidationError";
+    if (options?.errors !== undefined) this.errors = options.errors;
   }
 }
 

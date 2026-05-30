@@ -10,7 +10,7 @@
  * @module
  */
 
-export { createRouter } from "./router";
+export { createRouter, routeMetadata } from "./router";
 export { serve } from "./serve";
 export { compose } from "./compose";
 export { createHttpRequest } from "./request";
@@ -20,6 +20,16 @@ export type {
   RouterOptions,
   ServeOptions,
   HttpServer,
+  Schema,
+  JsonSchema,
+  Infer,
+  RouteRequest,
+  ResponseObject,
+  RouteDef,
+  RouteMeta,
+  TypedHandler,
+  TypedRequest,
+  ValidatedLocals,
 } from "./types";
 
 export type {

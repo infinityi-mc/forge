@@ -4,8 +4,10 @@
  * Two faces share one set of primitives: a resilient, traced **client**
  * for calling other services, and a thin typed **server** over
  * `Bun.serve()`. PR A shipped the client, the RFC 7807 *Problem Details*
- * surface, the error taxonomy, and the `forge/http/testing` doubles;
- * PR B adds the server router, middleware stack, and server tracing.
+ * surface, the error taxonomy, and the `forge/http/testing` doubles; PR B
+ * added the server router, middleware stack, and server tracing; PR C adds
+ * schema-validated typed routes (`route()`/`validate()`) and OpenAPI 3.1
+ * generation (`buildOpenApi`/`serveOpenApi`/`problemSchema`).
  *
  * @module
  */
@@ -29,12 +31,28 @@ export type {
 } from "./types";
 
 // Server
-export { createRouter, serve, compose, createHttpRequest } from "./server";
+export {
+  createRouter,
+  serve,
+  compose,
+  createHttpRequest,
+  routeMetadata,
+} from "./server";
 export type {
   Router,
   RouterOptions,
   ServeOptions,
   HttpServer,
+  Schema,
+  JsonSchema,
+  Infer,
+  RouteRequest,
+  ResponseObject,
+  RouteDef,
+  RouteMeta,
+  TypedHandler,
+  TypedRequest,
+  ValidatedLocals,
 } from "./server/types";
 export type {
   HttpRequest,
@@ -53,6 +71,7 @@ export {
   auth,
   problemDetails,
   telemetryMiddleware,
+  validate,
 } from "./middleware";
 export type {
   RequestIdOptions,
@@ -64,7 +83,17 @@ export type {
   AuthOptions,
   ProblemDetailsOptions,
   TelemetryMiddlewareOptions,
+  ValidateOptions,
 } from "./middleware";
+
+// OpenAPI 3.1 generation
+export { buildOpenApi, serveOpenApi, problemSchema } from "./openapi";
+export type {
+  OpenApiInfo,
+  BuildOpenApiOptions,
+  OpenApiDocument,
+  ServeOpenApiOptions,
+} from "./openapi";
 
 // Codec
 export { jsonCodec } from "./codec";
