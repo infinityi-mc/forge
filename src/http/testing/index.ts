@@ -21,6 +21,8 @@
 import { createHttpClient } from "../client";
 import type { HttpClient, HttpClientOptions } from "../client/types";
 import { renderProblem } from "../problem/render";
+import { createHttpRequest } from "../server/request";
+import type { Router } from "../server/types";
 import { createTestTelemetry } from "../../telemetry/testing";
 import type { TestTelemetry } from "../../telemetry/testing";
 import type { FetchLike, ProblemDetails } from "../types";
@@ -31,6 +33,75 @@ export {
   type HttpClientFactory,
   type HttpConformanceScenario,
 } from "./conformance";
+export {
+  STANDARD_SERVER_SCENARIOS,
+  assertServerConformance,
+  type RouterFactory,
+  type ServerConformanceScenario,
+} from "./conformance";
+
+/**
+ * Drives a {@link Router}'s handler **in-process** (no socket): build a
+ * `Request`, get a `Response`. The fastest way to unit-test routes +
+ * middleware. Relative paths resolve against `baseUrl` (default
+ * `http://test.local`).
+ */
+export interface TestClient {
+  /** Send a fully-formed request (path or `Request`). */
+  fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+  get(path: string, init?: RequestInit): Promise<Response>;
+  post(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  put(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  patch(path: string, body?: unknown, init?: RequestInit): Promise<Response>;
+  delete(path: string, init?: RequestInit): Promise<Response>;
+}
+
+/** Build an in-process {@link TestClient} for `router`. */
+export function testClient(
+  router: Router,
+  options: { baseUrl?: string } = {},
+): TestClient {
+  const baseUrl = options.baseUrl ?? "http://test.local";
+  const handler = router.handler();
+
+  const send = (input: string | Request, init?: RequestInit): Promise<Response> => {
+    const request =
+      input instanceof Request ? input : new Request(resolve(baseUrl, input), init);
+    return Promise.resolve(handler(createHttpRequest(request)));
+  };
+  const withBody = (
+    method: string,
+    path: string,
+    body?: unknown,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const hasBody = body !== undefined;
+    const headers = new Headers(init?.headers);
+    if (hasBody && !headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+    return send(path, {
+      ...init,
+      method,
+      headers,
+      ...(hasBody ? { body: JSON.stringify(body) } : {}),
+    });
+  };
+
+  return {
+    fetch: send,
+    get: (path, init) => send(path, { ...init, method: "GET" }),
+    post: (path, body, init) => withBody("POST", path, body, init),
+    put: (path, body, init) => withBody("PUT", path, body, init),
+    patch: (path, body, init) => withBody("PATCH", path, body, init),
+    delete: (path, init) => send(path, { ...init, method: "DELETE" }),
+  };
+}
+
+function resolve(baseUrl: string, path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  return new URL(path, baseUrl).toString();
+}
 
 /** A request observed by a {@link MockServer}, captured for assertions. */
 export interface RecordedRequest {

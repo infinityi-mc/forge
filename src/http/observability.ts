@@ -22,8 +22,16 @@ export type SpanAttributes = Readonly<
   Record<string, string | number | boolean | undefined>
 >;
 
-/** A monotonic counter (e.g. request totals). */
+/** A monotonic counter (e.g. request totals). Drops negative deltas. */
 export interface CounterLike {
+  add(value: number, attributes?: MetricAttributes): void;
+}
+
+/**
+ * A bi-directional counter (e.g. in-flight requests, queue depth). Unlike
+ * {@link CounterLike} it accepts negative deltas, so `add(-1)` decrements.
+ */
+export interface UpDownCounterLike {
   add(value: number, attributes?: MetricAttributes): void;
 }
 
@@ -41,6 +49,10 @@ export interface MeterLike {
     name: string,
     options?: { description?: string; unit?: string },
   ): CounterLike;
+  createUpDownCounter(
+    name: string,
+    options?: { description?: string; unit?: string },
+  ): UpDownCounterLike;
   createHistogram(
     name: string,
     options?: { description?: string; unit?: string },
