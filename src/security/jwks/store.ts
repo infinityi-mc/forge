@@ -1,4 +1,5 @@
 import { Secret, isSecret } from "../../config/secret";
+import type { AuditLogger } from "../audit/types";
 import { KeyResolutionError } from "../errors";
 import {
   importHmacSecret,
@@ -6,6 +7,11 @@ import {
   isHmacAlgorithm,
 } from "../jwt/algorithms";
 import type { JwsAlgorithm } from "../jwt/types";
+import type {
+  CounterLike,
+  SecurityTelemetry,
+  UpDownCounterLike,
+} from "../types";
 import type {
   FetchLike,
   HealthResult,
@@ -79,6 +85,10 @@ export interface CreateJwksKeyStoreOptions {
   readonly jwksUri: string;
   readonly cache?: JwksCacheOptions;
   readonly fetch?: FetchLike;
+  /** Opt-in observability — emits `security.jwks.refetch` + `cache.size`. */
+  readonly telemetry?: SecurityTelemetry;
+  /** Always-on audit logger — records `auth.key.rotated` on rotation. */
+  readonly audit?: AuditLogger;
 }
 
 export function createJwksKeyStore(options: CreateJwksKeyStoreOptions): KeyStore {
@@ -94,9 +104,20 @@ export function createJwksKeyStore(options: CreateJwksKeyStoreOptions): KeyStore
   const ttlMs = options.cache?.ttlMs ?? DEFAULT_TTL_MS;
   const minRefetchIntervalMs =
     options.cache?.minRefetchIntervalMs ?? DEFAULT_MIN_REFETCH_INTERVAL_MS;
+  const refetchCounter: CounterLike | undefined =
+    options.telemetry?.meter?.createCounter?.("security.jwks.refetch", {
+      description: "JWKS refetch attempts (detects rotation storms)",
+    });
+  const cacheSizeCounter: UpDownCounterLike | undefined =
+    options.telemetry?.meter?.createUpDownCounter?.("security.jwks.cache.size", {
+      description: "Cached JWKS verification keys",
+    });
+  const audit = options.audit;
   let cached: CachedJwks | undefined;
   let lastFetchAt = 0;
   let inFlight: Promise<void> | undefined;
+  let knownKids = new Set<string>();
+  let cacheSize = 0;
 
   async function fetchJwks(force: boolean): Promise<void> {
     const now = Date.now();
@@ -114,11 +135,17 @@ export function createJwksKeyStore(options: CreateJwksKeyStoreOptions): KeyStore
     }
 
     inFlight = (async () => {
-      const response = await runFetch(options.cache, () => fetchLike(options.jwksUri));
-      if (!response.ok) {
-        throw new KeyResolutionError(
-          `JWKS fetch failed with HTTP ${response.status}`,
-        );
+      let response: Response;
+      try {
+        response = await runFetch(options.cache, () => fetchLike(options.jwksUri));
+        if (!response.ok) {
+          throw new KeyResolutionError(
+            `JWKS fetch failed with HTTP ${response.status}`,
+          );
+        }
+      } catch (error) {
+        refetchCounter?.add(1, { outcome: "failure" });
+        throw error;
       }
       const body = await response.json();
       const jwks = normalizeJwks(body);
@@ -128,10 +155,38 @@ export function createJwksKeyStore(options: CreateJwksKeyStoreOptions): KeyStore
         expiresAt: Date.now() + (maxAgeMs ?? ttlMs),
       };
       lastFetchAt = Date.now();
+      refetchCounter?.add(1, { outcome: "success" });
+      onJwksRefreshed(jwks);
     })().finally(() => {
       inFlight = undefined;
     });
     await inFlight;
+  }
+
+  function onJwksRefreshed(jwks: JsonWebKeySet): void {
+    const nextKids = new Set<string>();
+    for (const key of jwks.keys) {
+      if (typeof key.kid === "string") nextKids.add(key.kid);
+    }
+    const rotatedIn = [...nextKids].filter((kid) => !knownKids.has(kid));
+    const hadKeys = knownKids.size > 0;
+    knownKids = nextKids;
+
+    const nextSize = jwks.keys.length;
+    if (nextSize !== cacheSize) {
+      cacheSizeCounter?.add(nextSize - cacheSize);
+      cacheSize = nextSize;
+    }
+
+    if (hadKeys && rotatedIn.length > 0 && audit !== undefined) {
+      void audit
+        .record({
+          action: "auth.key.rotated",
+          outcome: "success",
+          metadata: { kids: rotatedIn },
+        })
+        .catch(() => undefined);
+    }
   }
 
   return {

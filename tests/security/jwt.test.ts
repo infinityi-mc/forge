@@ -9,6 +9,8 @@ import {
   createJwtVerifier,
 } from "../../src/security";
 import {
+  SECURITY_REGRESSION_SCENARIOS,
+  STANDARD_SECURITY_SCENARIOS,
   assertConformance,
   fakePrincipal,
   signTestJwt,
@@ -170,7 +172,7 @@ describe("createJwtVerifier", () => {
     });
 
     const signed = await signTestJwt();
-    await assertConformance(() => ({
+    const factory = () => ({
       token: signed.token,
       verifier: createJwtVerifier({
         keys: { jwks: signed.jwks! },
@@ -178,7 +180,9 @@ describe("createJwtVerifier", () => {
         issuer: "https://issuer.test",
         audience: "api",
       }),
-    }));
+    });
+    await assertConformance(factory, STANDARD_SECURITY_SCENARIOS);
+    await assertConformance(factory, SECURITY_REGRESSION_SCENARIOS);
   });
 });
 

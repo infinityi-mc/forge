@@ -2,8 +2,8 @@ import { AuthorizationError, TokenInvalidError } from "../errors";
 import { authorize } from "../authz";
 import type { AuthzContext, Policy } from "../authz";
 import { auditPrincipal } from "../audit";
-import type { AuditEventInput, AuditRecorder, AuditResource } from "../audit";
-import type { Principal, TokenVerifier } from "../types";
+import type { AuditEventInput, AuditLogger } from "../audit";
+import type { Principal, SecurityTelemetry, TokenVerifier } from "../types";
 
 /**
  * Minimal structural view of the request the security middleware needs:
@@ -36,8 +36,12 @@ export type SecurityHandler<Req extends SecurityHttpRequest = SecurityHttpReques
 export type SecurityMiddleware<Req extends SecurityHttpRequest = SecurityHttpRequest> =
   (next: SecurityHandler<Req>) => SecurityHandler<Req>;
 
+/**
+ * Per-request audit additions a caller can attach to the standard event —
+ * the audited `resource`, free-form `metadata`, and/or a `correlationId`.
+ */
 export type AuditHttpContext = Partial<
-  Pick<AuditEventInput, "request" | "attributes" | "resource">
+  Pick<AuditEventInput, "resource" | "metadata" | "correlationId">
 >;
 
 export type AuditHttpContextProvider<Req extends SecurityHttpRequest = SecurityHttpRequest> =
@@ -47,7 +51,7 @@ export type AuditHttpContextProvider<Req extends SecurityHttpRequest = SecurityH
 export interface AuthenticateOptions<Req extends SecurityHttpRequest = SecurityHttpRequest> {
   readonly verifier: TokenVerifier;
   readonly principalKey?: string;
-  readonly audit?: AuditRecorder;
+  readonly audit?: AuditLogger;
   readonly auditContext?: AuditHttpContextProvider<Req>;
 }
 
@@ -59,8 +63,10 @@ export interface AuthorizeRouteOptions<
   readonly action?: string;
   readonly resource?: R | ((req: Req) => R | Promise<R>);
   readonly principalKey?: string;
-  readonly audit?: AuditRecorder;
+  readonly audit?: AuditLogger;
   readonly auditContext?: AuditHttpContextProvider<Req>;
+  /** Opt-in observability — emits `security.authz.decisions` + spans. */
+  readonly telemetry?: SecurityTelemetry;
 }
 
 /**
@@ -81,14 +87,14 @@ export function authenticate<Req extends SecurityHttpRequest = SecurityHttpReque
       req.locals[principalKey] = principal;
     } catch (error) {
       await recordAudit(req, options.audit, options.auditContext, {
-        type: "authentication/failure",
+        action: "auth.authentication_failed",
         outcome: "failure",
         reason: reasonForError(error),
       });
       throw error;
     }
     await recordAudit(req, options.audit, options.auditContext, {
-      type: "authentication/success",
+      action: "auth.authenticated",
       outcome: "success",
       principal: auditPrincipal(principal),
     });
@@ -108,47 +114,65 @@ export function authorizeRoute<
   options: AuthorizeRouteOptions<R, Req> = {},
 ): SecurityMiddleware<Req> {
   const principalKey = options.principalKey ?? "principal";
+  const decisions = options.telemetry?.meter?.createCounter?.(
+    "security.authz.decisions",
+    { description: "Authorization decisions" },
+  );
+  const tracer = options.telemetry?.tracer;
+
   return (next) => async (req) => {
     const action = options.action ?? deriveAction(req);
-    const principal = req.locals?.[principalKey];
-    if (!isPrincipal(principal)) {
-      await recordAudit(req, options.audit, options.auditContext, {
-        type: "authorization/deny",
-        outcome: "deny",
-        action,
-        reason: "principal_required",
-      });
-      throw new AuthorizationError("Principal is required");
-    }
-
-    const resource = typeof options.resource === "function"
-      ? await (options.resource as (req: Req) => R | Promise<R>)(req)
-      : options.resource;
-    const ctx: AuthzContext<R> = {
-      principal,
-      action,
-      ...(resource === undefined ? {} : { resource }),
-    };
-    const decision = await authorize(policy, ctx);
-    if (decision.effect === "deny") {
-      await recordAudit(req, options.audit, options.auditContext, {
-        type: "authorization/deny",
-        outcome: "deny",
-        principal: auditPrincipal(principal),
-        action,
-        ...auditResource(resource),
-        reason: decision.reason,
-      });
-      throw new AuthorizationError(decision.reason);
-    }
-    await recordAudit(req, options.audit, options.auditContext, {
-      type: "authorization/allow",
-      outcome: "allow",
-      principal: auditPrincipal(principal),
-      action,
-      ...auditResource(resource),
+    const span = tracer?.startSpan("security.authz", {
+      attributes: { "authz.action": action },
     });
-    return next(req);
+    try {
+      const principal = req.locals?.[principalKey];
+      if (!isPrincipal(principal)) {
+        decisions?.add(1, { action, effect: "deny" });
+        span?.setStatus?.({ code: "error", message: "principal_required" });
+        await recordAudit(req, options.audit, options.auditContext, {
+          action: "authz.denied",
+          outcome: "denied",
+          reason: "principal_required",
+          metadata: { action },
+        });
+        throw new AuthorizationError("Principal is required");
+      }
+
+      const resource =
+        typeof options.resource === "function"
+          ? await (options.resource as (req: Req) => R | Promise<R>)(req)
+          : options.resource;
+      const ctx: AuthzContext<R> = {
+        principal,
+        action,
+        ...(resource === undefined ? {} : { resource }),
+      };
+      const decision = await authorize(policy, ctx);
+      if (decision.effect === "deny") {
+        const effect = decision.reason === "policy_error" ? "error" : "deny";
+        decisions?.add(1, { action, effect });
+        span?.setStatus?.({ code: "error", message: decision.reason });
+        await recordAudit(req, options.audit, options.auditContext, {
+          action: "authz.denied",
+          outcome: "denied",
+          principal: auditPrincipal(principal),
+          reason: decision.reason,
+          metadata: { action },
+        });
+        throw new AuthorizationError(decision.reason);
+      }
+      decisions?.add(1, { action, effect: "allow" });
+      await recordAudit(req, options.audit, options.auditContext, {
+        action: "authz.allowed",
+        outcome: "success",
+        principal: auditPrincipal(principal),
+        metadata: { action },
+      });
+      return next(req);
+    } finally {
+      span?.end();
+    }
   };
 }
 
@@ -161,17 +185,27 @@ function deriveAction(req: SecurityHttpRequest): string {
 
 async function recordAudit(
   req: SecurityHttpRequest,
-  audit: AuditRecorder | undefined,
+  audit: AuditLogger | undefined,
   provider: AuditHttpContextProvider<any> | undefined,
   event: AuditEventInput,
 ): Promise<void> {
   if (audit === undefined) return;
   try {
     const context = await auditContext(req, provider);
-    await audit.record({ ...event, ...context });
+    await audit.record({ ...event, ...context, metadata: mergeMetadata(event, context) });
   } catch {
     // Audit is best-effort and must not alter authentication/authorization flow.
   }
+}
+
+function mergeMetadata(
+  event: AuditEventInput,
+  context: AuditHttpContext,
+): Record<string, unknown> | undefined {
+  if (event.metadata === undefined && context.metadata === undefined) {
+    return undefined;
+  }
+  return { ...event.metadata, ...context.metadata };
 }
 
 async function auditContext(
@@ -180,17 +214,6 @@ async function auditContext(
 ): Promise<AuditHttpContext> {
   if (provider === undefined) return {};
   return typeof provider === "function" ? await provider(req) : provider;
-}
-
-function auditResource(resource: unknown): { resource?: AuditResource } {
-  if (
-    typeof resource === "string" ||
-    typeof resource === "number" ||
-    typeof resource === "boolean"
-  ) {
-    return { resource };
-  }
-  return {};
 }
 
 function reasonForError(error: unknown): string {

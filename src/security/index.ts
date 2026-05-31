@@ -6,13 +6,17 @@ export type {
   MeterLike,
   Principal,
   SecurityObservation,
+  SecuritySpan,
   SecurityTelemetry,
   TokenVerifier,
+  TracerLike,
+  UpDownCounterLike,
   VerifyOptions,
 } from "./types";
 
 export {
   AlgorithmNotAllowedError,
+  AuditError,
   AuthenticationError,
   AuthorizationError,
   KeyResolutionError,
@@ -55,23 +59,35 @@ export type {
 
 export {
   auditPrincipal,
-  createAuditRecorder,
+  createAuditLogger,
+  hashAuditEvent,
+  logSink,
   memoryAuditSink,
+  memorySink,
+  verifyAuditChain,
 } from "./audit";
 export type {
-  AuditAttributes,
   AuditEvent,
   AuditEventInput,
-  AuditEventType,
+  AuditLogger,
+  AuditOptions,
   AuditOutcome,
   AuditPrincipal,
-  AuditRecorder,
-  AuditRecorderOptions,
-  AuditRequestContext,
   AuditResource,
   AuditSink,
+  LogSinkOptions,
   MemoryAuditSink,
 } from "./audit";
+
+export {
+  securityHealthComponent,
+} from "./lifecycle";
+export type {
+  LifecycleComponent,
+  LifecycleHealthResult,
+  LifecycleHealthStatus,
+  SecurityHealthComponentOptions,
+} from "./lifecycle";
 
 export {
   authenticate,
