@@ -2,11 +2,12 @@ import type { Principal } from "../types";
 
 export type Decision =
   | { readonly effect: "allow" }
-  | { readonly effect: "deny"; readonly reason?: string };
+  | { readonly effect: "deny"; readonly reason: string };
 
 export interface AuthzContext<R = unknown> {
   readonly principal: Principal;
-  readonly action?: string;
+  /** The action being guarded (handler-supplied, e.g. `"reports:read"`). */
+  readonly action: string;
   readonly resource?: R;
 }
 
@@ -27,26 +28,36 @@ export async function authorize<R>(
 
 export const allow: Policy<any> = () => ({ effect: "allow" });
 
-export function deny<R = unknown>(reason?: string): Policy<R> {
+export function deny<R = unknown>(reason: string): Policy<R> {
   return () => denied(reason);
 }
 
-export function requireRole<R = unknown>(role: string): Policy<R> {
+/** Allow when the principal holds **any** of the given roles. */
+export function requireRole<R = unknown>(...roles: string[]): Policy<R> {
   return ({ principal }) =>
-    principal.roles.includes(role) ? { effect: "allow" } : denied("role_required");
+    roles.some((role) => principal.roles.includes(role))
+      ? { effect: "allow" }
+      : denied("role_required");
 }
 
-export function requireScope<R = unknown>(scope: string): Policy<R> {
+/** Allow when the principal holds **any** of the given scopes. */
+export function requireScope<R = unknown>(...scopes: string[]): Policy<R> {
   return ({ principal }) =>
-    principal.scopes.includes(scope) ? { effect: "allow" } : denied("scope_required");
+    scopes.some((scope) => principal.scopes.includes(scope))
+      ? { effect: "allow" }
+      : denied("scope_required");
 }
 
+/**
+ * Allow when the principal's tenant matches the tenant extracted from the
+ * guarded resource. Fail-closed when either side is absent.
+ */
 export function requireTenant<R = unknown>(
-  tenant: string | ((ctx: AuthzContext<R>) => string | undefined),
+  tenantOf: (resource: R | undefined) => string | undefined,
 ): Policy<R> {
-  return (ctx) => {
-    const expected = typeof tenant === "function" ? tenant(ctx) : tenant;
-    return expected !== undefined && ctx.principal.tenant === expected
+  return ({ principal, resource }) => {
+    const expected = tenantOf(resource);
+    return expected !== undefined && principal.tenant === expected
       ? { effect: "allow" }
       : denied("tenant_required");
   };
@@ -85,8 +96,8 @@ export function not<R = unknown>(policy: Policy<R>): Policy<R> {
   };
 }
 
-function denied(reason?: string): Decision {
-  return reason === undefined ? { effect: "deny" } : { effect: "deny", reason };
+function denied(reason: string): Decision {
+  return { effect: "deny", reason };
 }
 
 function isDecision(value: unknown): value is Decision {
@@ -94,6 +105,5 @@ function isDecision(value: unknown): value is Decision {
   const effect = (value as { effect?: unknown }).effect;
   if (effect === "allow") return true;
   if (effect !== "deny") return false;
-  const reason = (value as { reason?: unknown }).reason;
-  return reason === undefined || typeof reason === "string";
+  return typeof (value as { reason?: unknown }).reason === "string";
 }
