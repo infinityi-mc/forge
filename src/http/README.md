@@ -70,11 +70,11 @@ await server.stop();
 4. **Built-in middleware** (`forge/http/middleware`) — every export is a factory; none is auto-installed:
    - `requestId()` — propagate/mint `x-request-id`, expose on `locals.requestId`, echo on the response;
    - `accessLog({ logger })` — one structured line per request (method, path, status, duration);
-   - `problemDetails({ logger })` — the error boundary: renders `application/problem+json` and **maps Forge errors structurally** (`ProblemError`→its status, `ValidationError`→`422`, `RateLimitError`→`429`+`Retry-After`, `CircuitOpenError`→`503`, everything else→a **leak-free `500`** logged but never serialized);
+   - `problemDetails({ logger })` — the error boundary: renders `application/problem+json` and **maps Forge errors structurally** (`ProblemError`→its status, `ValidationError`→`422`, `RateLimitError`/`RateLimitedError`→`429`+`Retry-After`, `CircuitOpenError`→`503`, everything else→a **leak-free `500`** logged but never serialized);
    - `cors(options)` — standards-compliant preflight (`204`) + response headers;
    - `bodyLimit({ maxBytes })` — reject oversized `Content-Length` with a `413` problem;
    - `telemetryMiddleware({ telemetry })` — the server mirror of `tracedFetch`: **extract** an inbound `traceparent` and start a `server` span as a remote child, plus `http.server.request.duration` / `http.server.active_requests`. Emits nothing unless a handle is injected;
-   - `rateLimit({ limiter })` and `auth({ verifier })` — thin **structural seams** for `forge/resilience` / `forge/security` (a rejection maps cleanly through `problemDetails`).
+   - `rateLimit({ limiter })` and `auth({ verifier })` — thin **structural seams** for `forge/resilience` / `forge/security` (a rejection maps cleanly through `problemDetails`). `rateLimit()` is an admission/back-pressure seam; when a full resilience pipeline is used as the limiter, its execution context is not threaded into `req.signal` for cooperative handler cancellation.
 5. **`testClient(router)`** (`forge/http/testing`) — an in-process driver (no socket): build a `Request`, get a `Response`, with `get`/`post`/… JSON helpers. Plus `STANDARD_SERVER_SCENARIOS` + `assertServerConformance()` for the framework-agnostic server invariants (compose order + short-circuit, RFC 7807 mapping, inbound-trace continuation, fail-fast conflicts).
 
 ---

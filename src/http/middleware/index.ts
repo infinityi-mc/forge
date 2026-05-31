@@ -202,7 +202,12 @@ export function bodyLimit(options: BodyLimitOptions): Middleware {
     };
 }
 
-/** A structural rate limiter (a `forge/resilience` pipeline satisfies this). */
+/**
+ * A structural admission limiter (a `forge/resilience` pipeline satisfies this).
+ * When a full pipeline is used here, its execution context is intentionally not
+ * threaded into `req.signal`; this middleware is for back-pressure, not
+ * cooperative cancellation of in-flight handlers.
+ */
 export interface Limiter {
   execute<T>(op: () => Promise<T> | T): Promise<T>;
 }
@@ -215,8 +220,8 @@ export interface RateLimitOptions {
 
 /**
  * Back-pressure via a structural `forge/resilience` rate limiter. A
- * `RateLimitError` thrown by the limiter propagates to `problemDetails()`,
- * which renders `429` with `Retry-After`.
+ * `RateLimitError`/`RateLimitedError` thrown by the limiter propagates to
+ * `problemDetails()`, which renders `429` with `Retry-After`.
  */
 export function rateLimit(options: RateLimitOptions): Middleware {
   const limiter = options.limiter;

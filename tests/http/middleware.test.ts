@@ -12,6 +12,10 @@ import {
 } from "../../src/http/middleware";
 import { problem } from "../../src/http/problem";
 import { ValidationError } from "../../src/http/errors";
+import {
+  combine,
+  rateLimit as resilienceRateLimit,
+} from "../../src/resilience";
 import { createTestTelemetry } from "../../src/telemetry/testing";
 
 describe("requestId", () => {
@@ -229,6 +233,24 @@ describe("rateLimit (structural seam)", () => {
       .use(rateLimit({ limiter }))
       .get("/", () => new Response("ok"));
     expect((await testClient(router).get("/")).status).toBe(429);
+  });
+
+  test("maps forge/resilience RateLimitedError to 429", async () => {
+    const limiter = combine(
+      resilienceRateLimit({
+        algorithm: { kind: "sliding-window", limit: 1, windowMs: 1_000 },
+      }),
+    );
+    const router = createRouter()
+      .use(problemDetails())
+      .use(rateLimit({ limiter }))
+      .get("/", () => new Response("ok"));
+    const client = testClient(router);
+
+    expect((await client.get("/")).status).toBe(200);
+    const limited = await client.get("/");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("1");
   });
 });
 

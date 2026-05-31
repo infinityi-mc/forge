@@ -18,7 +18,7 @@
  * | `ValidationError` | `422` | `errors[]` extension when present |
  * | `AuthenticationError` (+ subclasses) | `401` | `forge/security` authn family |
  * | `AuthorizationError` | `403` | `forge/security` policy deny |
- * | `RateLimitError` | `429` | `Retry-After` from `retryAfterMs` |
+ * | `RateLimitError` / `RateLimitedError` | `429` | `Retry-After` from `retryAfterMs` |
  * | `CircuitOpenError` | `503` | dependency unavailable |
  * | _anything else_ | `500` | no `detail`; logged, not leaked |
  *
@@ -94,7 +94,7 @@ function renderError(error: unknown, logger?: Logger): Response {
   }
 
   // Structural mapping for forge/resilience errors (no hard import).
-  if (name === "RateLimitError") {
+  if (name === "RateLimitError" || name === "RateLimitedError") {
     const res = renderProblem({ status: 429, detail: "Rate limit exceeded" });
     const retryAfterMs = (error as { retryAfterMs?: number }).retryAfterMs;
     if (typeof retryAfterMs === "number" && retryAfterMs >= 0) {
