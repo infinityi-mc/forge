@@ -22,10 +22,13 @@ describe("security exports", () => {
     expect(jwt.apiKeyFingerprint).toBeFunction();
     expect(authz.authorize).toBeFunction();
     expect(authz.requireRole).toBeFunction();
-    expect(audit.createAuditRecorder).toBeFunction();
+    expect(audit.createAuditLogger).toBeFunction();
+    expect(audit.logSink).toBeFunction();
+    expect(audit.memorySink).toBeFunction();
     expect(audit.memoryAuditSink).toBeFunction();
-    expect(security.createAuditRecorder).toBeFunction();
-    expect(security.memoryAuditSink).toBeFunction();
+    expect(security.createAuditLogger).toBeFunction();
+    expect(security.memorySink).toBeFunction();
+    expect(security.securityHealthComponent).toBeFunction();
     expect(http.authenticate).toBeFunction();
     expect(http.authorizeRoute).toBeFunction();
     expect(jwks.createJwksKeyStore).toBeFunction();
@@ -53,6 +56,9 @@ describe("security exports", () => {
     );
     expect(new errors.KeyResolutionError("x")).toBeInstanceOf(
       errors.SecurityError,
+    );
+    expect(new security.AuditError("x")).toBeInstanceOf(
+      security.SecurityError,
     );
   });
 });

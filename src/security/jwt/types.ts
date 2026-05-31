@@ -1,4 +1,5 @@
 import type { Secret } from "../../config/secret";
+import type { AuditLogger } from "../audit/types";
 import type {
   Clock,
   LoggerLike,
@@ -34,6 +35,8 @@ export interface JwtVerifierOptions {
   readonly clock?: Clock;
   readonly telemetry?: SecurityTelemetry;
   readonly logger?: LoggerLike;
+  /** Always-on audit logger: records token verification + key rotation. */
+  readonly audit?: AuditLogger;
 }
 
 export interface JwtHeader {

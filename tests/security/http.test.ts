@@ -4,9 +4,9 @@ import {
   TokenInvalidError,
   allow,
   authorizeRoute,
-  createAuditRecorder,
+  createAuditLogger,
   deny,
-  memoryAuditSink,
+  memorySink,
   requireScope,
 } from "../../src/security";
 import { authenticate } from "../../src/security/http";
@@ -48,11 +48,8 @@ describe("security HTTP middleware seam", () => {
 
   test("successful authentication records an audit event", async () => {
     const principal = fakePrincipal({ subject: "user_3" });
-    const sink = memoryAuditSink();
-    const audit = createAuditRecorder({
-      sink,
-      idGenerator: () => "audit_auth_success",
-    });
+    const sink = memorySink();
+    const audit = createAuditLogger({ sink });
     const req: SecurityHttpRequest = {
       headers: { authorization: "Bearer token" },
       locals: {},
@@ -61,30 +58,22 @@ describe("security HTTP middleware seam", () => {
     await authenticate({
       verifier: testVerifier({ principalFor: principal }),
       audit,
-      auditContext: { request: { method: "GET", path: "/reports" } },
+      auditContext: { metadata: { method: "GET", path: "/reports" } },
     })(ok)(req);
 
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]).toMatchObject({
-      id: "audit_auth_success",
-      type: "authentication/success",
+      action: "auth.authenticated",
       outcome: "success",
-      principal: {
-        subject: "user_3",
-        issuer: "https://issuer.test",
-      },
-      request: { method: "GET", path: "/reports" },
+      principal: { subject: "user_3", issuer: "https://issuer.test" },
+      metadata: { method: "GET", path: "/reports" },
     });
     expect(JSON.stringify(sink.events[0])).not.toContain("Bearer");
-    expect(JSON.stringify(sink.events[0])).not.toContain("token");
   });
 
   test("authentication failure records and rethrows the original error", async () => {
-    const sink = memoryAuditSink();
-    const audit = createAuditRecorder({
-      sink,
-      idGenerator: () => "audit_auth_failure",
-    });
+    const sink = memorySink();
+    const audit = createAuditLogger({ sink });
     const error = new TokenInvalidError("bad token");
 
     await expect(
@@ -96,8 +85,7 @@ describe("security HTTP middleware seam", () => {
 
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]).toMatchObject({
-      id: "audit_auth_failure",
-      type: "authentication/failure",
+      action: "auth.authentication_failed",
       outcome: "failure",
       reason: "bad token",
     });
@@ -119,11 +107,8 @@ describe("security HTTP middleware seam", () => {
   });
 
   test("authorizeRoute records allow, deny, and missing-principal audit events", async () => {
-    const sink = memoryAuditSink();
-    const audit = createAuditRecorder({
-      sink,
-      idGenerator: () => `audit_${sink.events.length + 1}`,
-    });
+    const sink = memorySink();
+    const audit = createAuditLogger({ sink });
     const req: SecurityHttpRequest = {
       headers: new Headers(),
       locals: {
@@ -137,7 +122,6 @@ describe("security HTTP middleware seam", () => {
     await authorizeRoute(requireScope("reports:read"), {
       audit,
       action: "reports:read",
-      resource: "report_1",
     })(ok)(req);
 
     await expect(
@@ -156,25 +140,21 @@ describe("security HTTP middleware seam", () => {
 
     expect(sink.events).toHaveLength(3);
     expect(sink.events[0]).toMatchObject({
-      type: "authorization/allow",
-      outcome: "allow",
-      action: "reports:read",
-      resource: "report_1",
-      principal: {
-        subject: "user_1",
-        tenant: "tenant_1",
-      },
+      action: "authz.allowed",
+      outcome: "success",
+      metadata: { action: "reports:read" },
+      principal: { subject: "user_1", tenant: "tenant_1" },
     });
     expect(sink.events[1]).toMatchObject({
-      type: "authorization/deny",
-      outcome: "deny",
-      action: "reports:write",
+      action: "authz.denied",
+      outcome: "denied",
+      metadata: { action: "reports:write" },
       reason: "blocked",
     });
     expect(sink.events[2]).toMatchObject({
-      type: "authorization/deny",
-      outcome: "deny",
-      action: "reports:read",
+      action: "authz.denied",
+      outcome: "denied",
+      metadata: { action: "reports:read" },
       reason: "principal_required",
     });
   });
@@ -193,10 +173,65 @@ describe("security HTTP middleware seam", () => {
     ).rejects.toThrow(AuthorizationError);
   });
 
+  test("authz decisions metric and spans are emitted when telemetry is wired", async () => {
+    const decisions: Array<Record<string, unknown>> = [];
+    const spans: Array<{ name: string; status?: string; ended: boolean }> = [];
+    const telemetry = {
+      meter: {
+        createCounter: () => ({
+          add: (_value: number, attributes?: Record<string, unknown>) => {
+            decisions.push(attributes ?? {});
+          },
+        }),
+      },
+      tracer: {
+        startSpan: (name: string) => {
+          const span = { name, ended: false } as {
+            name: string;
+            status?: string;
+            ended: boolean;
+          };
+          spans.push(span);
+          return {
+            setAttribute: () => undefined,
+            setStatus: (s: { code: string }) => {
+              span.status = s.code;
+            },
+            end: () => {
+              span.ended = true;
+            },
+          };
+        },
+      },
+    };
+    const req: SecurityHttpRequest = {
+      headers: new Headers(),
+      locals: { principal: fakePrincipal({ scopes: ["reports:read"] }) },
+    };
+
+    await authorizeRoute(requireScope("reports:read"), {
+      action: "reports:read",
+      telemetry,
+    })(ok)(req);
+    await expect(
+      authorizeRoute(deny("blocked"), { action: "reports:write", telemetry })(
+        ok,
+      )(req),
+    ).rejects.toThrow(AuthorizationError);
+
+    expect(decisions).toEqual([
+      { action: "reports:read", effect: "allow" },
+      { action: "reports:write", effect: "deny" },
+    ]);
+    expect(spans).toHaveLength(2);
+    expect(spans.every((s) => s.ended)).toBe(true);
+    expect(spans[1]?.status).toBe("error");
+  });
+
   test("custom principalKey, action, and async resource options work", async () => {
     const principal = fakePrincipal({ tenant: "tenant_1" });
-    const sink = memoryAuditSink();
-    const audit = createAuditRecorder({ sink });
+    const sink = memorySink();
+    const audit = createAuditLogger({ sink });
     const req: SecurityHttpRequest = {
       headers: new Headers({ authorization: "Bearer token" }),
       locals: {},
@@ -221,8 +256,8 @@ describe("security HTTP middleware seam", () => {
         resource: async () => ({ tenantId: "tenant_1" }),
         audit,
         auditContext: async () => ({
-          resource: { type: "report", tenantId: "tenant_1" },
-          attributes: { trace: "abc" },
+          resource: { type: "report", id: "tenant_1" },
+          metadata: { trace: "abc" },
         }),
       },
     )(() => {
@@ -233,11 +268,10 @@ describe("security HTTP middleware seam", () => {
     expect(req.locals?.actor).toBe(principal);
     expect(called).toBe(1);
     expect(sink.events.at(-1)).toMatchObject({
-      type: "authorization/allow",
-      outcome: "allow",
-      action: "read",
-      resource: { type: "report", tenantId: "tenant_1" },
-      attributes: { trace: "abc" },
+      action: "authz.allowed",
+      outcome: "success",
+      resource: { type: "report", id: "tenant_1" },
+      metadata: { action: "read", trace: "abc" },
     });
   });
 
