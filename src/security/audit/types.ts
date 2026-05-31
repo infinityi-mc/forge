@@ -60,6 +60,8 @@ export interface AuditOptions {
   readonly sink: AuditSink;
   /** Dotted `metadata` paths whose values are replaced before write. */
   readonly redact?: readonly string[];
+  /** Replacement token for redacted values (defaults to `"[REDACTED]"`). */
+  readonly redactReplacement?: string;
   /** Hash-chain each record to the previous one for tamper-evidence. */
   readonly tamperEvident?: boolean;
   /** Pulls a correlation id (traceId / `x-request-id`) at record time. */

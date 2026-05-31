@@ -42,6 +42,7 @@ const realClock: Clock = { now: () => Date.now() };
 export function createAuditLogger(options: AuditOptions): AuditLogger {
   const clock = options.clock ?? realClock;
   const redactPaths = options.redact ?? [];
+  const redactToken = options.redactReplacement ?? REDACTED;
   const tamperEvident = options.tamperEvident === true;
   let previousHash: string | undefined;
   let tail: Promise<unknown> = Promise.resolve();
@@ -58,7 +59,7 @@ export function createAuditLogger(options: AuditOptions): AuditLogger {
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(input.metadata === undefined
         ? {}
-        : { metadata: redactMetadata(input.metadata, redactPaths) }),
+        : { metadata: redactMetadata(input.metadata, redactPaths, redactToken) }),
     };
 
     let hash: string | undefined;
@@ -148,6 +149,7 @@ function serialize(event: AuditEvent): Record<string, unknown> {
 function redactMetadata(
   metadata: Record<string, unknown>,
   paths: readonly string[],
+  replacement: string = REDACTED,
 ): Record<string, unknown> {
   if (paths.length === 0) return metadata;
   let out: Record<string, unknown> = metadata;
@@ -158,7 +160,7 @@ function redactMetadata(
       out = structuredClone(metadata);
       cloned = true;
     }
-    setPath(out, path, REDACTED);
+    setPath(out, path, replacement);
   }
   return out;
 }

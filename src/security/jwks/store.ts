@@ -143,20 +143,20 @@ export function createJwksKeyStore(options: CreateJwksKeyStoreOptions): KeyStore
             `JWKS fetch failed with HTTP ${response.status}`,
           );
         }
+        const body = await response.json();
+        const jwks = normalizeJwks(body);
+        const maxAgeMs = cacheControlMaxAgeMs(response.headers.get("cache-control"));
+        cached = {
+          jwks,
+          expiresAt: Date.now() + (maxAgeMs ?? ttlMs),
+        };
+        lastFetchAt = Date.now();
+        refetchCounter?.add(1, { outcome: "success" });
+        onJwksRefreshed(jwks);
       } catch (error) {
         refetchCounter?.add(1, { outcome: "failure" });
         throw error;
       }
-      const body = await response.json();
-      const jwks = normalizeJwks(body);
-      const maxAgeMs = cacheControlMaxAgeMs(response.headers.get("cache-control"));
-      cached = {
-        jwks,
-        expiresAt: Date.now() + (maxAgeMs ?? ttlMs),
-      };
-      lastFetchAt = Date.now();
-      refetchCounter?.add(1, { outcome: "success" });
-      onJwksRefreshed(jwks);
     })().finally(() => {
       inFlight = undefined;
     });
