@@ -16,6 +16,8 @@
  * | :-- | :-- | :-- |
  * | `ProblemError` | its own | rendered verbatim (extensions preserved) |
  * | `ValidationError` | `422` | `errors[]` extension when present |
+ * | `AuthenticationError` (+ subclasses) | `401` | `forge/security` authn family |
+ * | `AuthorizationError` | `403` | `forge/security` policy deny |
  * | `RateLimitError` | `429` | `Retry-After` from `retryAfterMs` |
  * | `CircuitOpenError` | `503` | dependency unavailable |
  * | _anything else_ | `500` | no `detail`; logged, not leaked |
@@ -27,6 +29,19 @@ import { ProblemError, ValidationError } from "../errors";
 import { renderProblem } from "../problem/render";
 import type { Logger } from "../observability";
 import type { Handler, Middleware } from "../types";
+
+/**
+ * `forge/security` authentication-error class names (the base plus its
+ * subclasses). Kept as a literal set so the mapping stays a structural
+ * `name` match — no `forge/security` import.
+ */
+const AUTHENTICATION_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "AuthenticationError",
+  "TokenExpiredError",
+  "TokenInvalidError",
+  "TokenClaimError",
+  "AlgorithmNotAllowedError",
+]);
 
 /** Options for {@link problemDetails}. */
 export interface ProblemDetailsOptions {
@@ -67,8 +82,18 @@ function renderError(error: unknown, logger?: Logger): Response {
     });
   }
 
-  // Structural mapping for forge/resilience errors (no hard import).
+  // Structural mapping for forge/security errors (no hard import): the
+  // authentication family → 401, authorization → 403. Matched by `name`
+  // (each subclass sets its own) so subclasses map without an instanceof.
   const name = error instanceof Error ? error.name : "";
+  if (AUTHENTICATION_ERROR_NAMES.has(name)) {
+    return renderProblem({ status: 401, detail: "Authentication required" });
+  }
+  if (name === "AuthorizationError") {
+    return renderProblem({ status: 403, detail: "Access denied" });
+  }
+
+  // Structural mapping for forge/resilience errors (no hard import).
   if (name === "RateLimitError") {
     const res = renderProblem({ status: 429, detail: "Rate limit exceeded" });
     const retryAfterMs = (error as { retryAfterMs?: number }).retryAfterMs;

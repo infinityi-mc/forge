@@ -1,90 +1,114 @@
-import type { Clock, LoggerLike, Principal } from "../types";
+import { AuditError } from "../errors";
+import type { Clock, Principal } from "../types";
+import { hashAuditEvent } from "./chain";
+import type {
+  AuditEvent,
+  AuditEventInput,
+  AuditLogger,
+  AuditOptions,
+  AuditPrincipal,
+  AuditSink,
+  LogSinkOptions,
+  MemoryAuditSink,
+} from "./types";
 
-export type AuditEventType =
-  | "authentication/success"
-  | "authentication/failure"
-  | "authorization/allow"
-  | "authorization/deny"
-  | (string & {});
+export type {
+  AuditEvent,
+  AuditEventInput,
+  AuditLogger,
+  AuditOptions,
+  AuditOutcome,
+  AuditPrincipal,
+  AuditResource,
+  AuditSink,
+  LogSinkOptions,
+  MemoryAuditSink,
+} from "./types";
+export { hashAuditEvent, verifyAuditChain } from "./chain";
 
-export type AuditOutcome =
-  | "success"
-  | "failure"
-  | "allow"
-  | "deny";
+const REDACTED = "[REDACTED]";
+const realClock: Clock = { now: () => Date.now() };
 
-export interface AuditPrincipal {
-  readonly subject: string;
-  readonly issuer: string;
-  readonly tenant?: string;
-  readonly roles: readonly string[];
-  readonly scopes: readonly string[];
-}
+/**
+ * Build an always-on {@link AuditLogger}. Records are written to the BYO
+ * {@link AuditSink} after optional metadata redaction and optional
+ * tamper-evident hash chaining. A sink failure surfaces as an
+ * {@link AuditError} (callers decide whether to swallow it — the HTTP seam
+ * does, so auditing never alters an auth decision).
+ *
+ * Records are serialized so the hash chain (and in-memory ordering) stays
+ * deterministic under concurrent callers.
+ */
+export function createAuditLogger(options: AuditOptions): AuditLogger {
+  const clock = options.clock ?? realClock;
+  const redactPaths = options.redact ?? [];
+  const redactToken = options.redactReplacement ?? REDACTED;
+  const tamperEvident = options.tamperEvident === true;
+  let previousHash: string | undefined;
+  let tail: Promise<unknown> = Promise.resolve();
 
-export type AuditRequestContext = Readonly<Record<string, unknown>>;
-export type AuditAttributes = Readonly<Record<string, unknown>>;
-export type AuditResource = string | number | boolean | AuditAttributes;
+  async function run(input: AuditEventInput): Promise<void> {
+    const correlationId = input.correlationId ?? options.correlation?.();
+    let event: AuditEvent = {
+      action: input.action,
+      outcome: input.outcome,
+      ...(input.principal === undefined ? {} : { principal: input.principal }),
+      ...(input.resource === undefined ? {} : { resource: input.resource }),
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+      at: input.at ?? new Date(clock.now()),
+      ...(correlationId === undefined ? {} : { correlationId }),
+      ...(input.metadata === undefined
+        ? {}
+        : { metadata: redactMetadata(input.metadata, redactPaths, redactToken) }),
+    };
 
-export interface AuditEvent {
-  readonly id: string;
-  readonly timestamp: Date;
-  readonly type: AuditEventType;
-  readonly outcome: AuditOutcome;
-  readonly principal?: AuditPrincipal;
-  readonly action?: string;
-  readonly resource?: AuditResource;
-  readonly reason?: string;
-  readonly request?: AuditRequestContext;
-  readonly attributes?: AuditAttributes;
-}
+    let hash: string | undefined;
+    if (tamperEvident) {
+      if (previousHash !== undefined) event = { ...event, previousHash };
+      hash = await hashAuditEvent(event);
+      event = { ...event, hash };
+    }
 
-export type AuditEventInput = Omit<AuditEvent, "id" | "timestamp">;
+    try {
+      await options.sink.record(event);
+    } catch (error) {
+      throw new AuditError("audit sink failed to record event", {
+        cause: error,
+      });
+    }
 
-export interface AuditSink {
-  record(event: AuditEvent): void | Promise<void>;
-}
-
-export interface AuditRecorder {
-  record(event: AuditEventInput): Promise<void>;
-}
-
-export interface AuditRecorderOptions {
-  readonly sink: AuditSink;
-  readonly clock?: Clock;
-  readonly idGenerator?: () => string;
-  readonly logger?: LoggerLike;
-}
-
-export interface MemoryAuditSink extends AuditSink {
-  readonly events: readonly AuditEvent[];
-  clear(): void;
-}
-
-export function createAuditRecorder(
-  options: AuditRecorderOptions,
-): AuditRecorder {
-  const clock = options.clock ?? { now: () => Date.now() };
-  const idGenerator = options.idGenerator ?? defaultIdGenerator;
+    // Only advance the chain after the event is durably recorded, so a sink
+    // failure does not leave subsequent events pointing at an unpersisted hash.
+    if (hash !== undefined) previousHash = hash;
+  }
 
   return {
-    async record(input) {
-      const event: AuditEvent = Object.freeze({
-        ...input,
-        id: idGenerator(),
-        timestamp: new Date(clock.now()),
-      });
-      try {
-        await options.sink.record(event);
-      } catch (error) {
-        options.logger?.warn?.("security audit recording failed", {
-          reason: error instanceof Error ? error.message : "unknown",
-        });
+    record(input) {
+      const result = tail.then(() => run(input));
+      tail = result.catch(() => undefined);
+      return result;
+    },
+  };
+}
+
+/** Default structured-log sink: writes each record via the injected logger. */
+export function logSink(options: LogSinkOptions): AuditSink {
+  const logger = options.logger;
+  return {
+    record(event) {
+      const attributes = serialize(event);
+      const message = `security.audit ${event.action}`;
+      if (event.outcome === "success") {
+        logger.info?.(message, attributes);
+      } else {
+        logger.warn?.(message, attributes);
       }
     },
   };
 }
 
-export function memoryAuditSink(): MemoryAuditSink {
+/** In-memory sink for tests; exposes recorded `events`. */
+export function memorySink(): MemoryAuditSink {
   const events: AuditEvent[] = [];
   return {
     get events() {
@@ -99,16 +123,72 @@ export function memoryAuditSink(): MemoryAuditSink {
   };
 }
 
-export function auditPrincipal(principal: Principal): AuditPrincipal {
-  return Object.freeze({
+/** Testing alias for {@link memorySink}. */
+export const memoryAuditSink = memorySink;
+
+/** Reduce a {@link Principal} to the non-sensitive identity summary. */
+export function auditPrincipal(
+  principal: Pick<Principal, "subject" | "issuer" | "tenant">,
+): AuditPrincipal {
+  return {
     subject: principal.subject,
     issuer: principal.issuer,
     ...(principal.tenant === undefined ? {} : { tenant: principal.tenant }),
-    roles: Object.freeze([...principal.roles]),
-    scopes: Object.freeze([...principal.scopes]),
-  });
+  };
 }
 
-function defaultIdGenerator(): string {
-  return crypto.randomUUID();
+function serialize(event: AuditEvent): Record<string, unknown> {
+  return { ...event, at: event.at.toISOString() };
+}
+
+/**
+ * Replace the value at each dotted `metadata` path with `[REDACTED]`,
+ * mirroring the `forge/telemetry/log` redact contract. Returns a shallow
+ * clone so the caller's object is not mutated.
+ */
+function redactMetadata(
+  metadata: Record<string, unknown>,
+  paths: readonly string[],
+  replacement: string = REDACTED,
+): Record<string, unknown> {
+  if (paths.length === 0) return metadata;
+  let out: Record<string, unknown> = metadata;
+  let cloned = false;
+  for (const path of paths) {
+    if (!hasPath(out, path)) continue;
+    if (!cloned) {
+      out = structuredClone(metadata);
+      cloned = true;
+    }
+    setPath(out, path, replacement);
+  }
+  return out;
+}
+
+function hasPath(root: Record<string, unknown>, path: string): boolean {
+  const segments = path.split(".");
+  let cursor: unknown = root;
+  for (const segment of segments) {
+    if (typeof cursor !== "object" || cursor === null) return false;
+    if (!(segment in (cursor as Record<string, unknown>))) return false;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return true;
+}
+
+function setPath(
+  root: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
+  const segments = path.split(".");
+  const last = segments.pop();
+  if (last === undefined) return;
+  let cursor: Record<string, unknown> = root;
+  for (const segment of segments) {
+    const next = cursor[segment];
+    if (typeof next !== "object" || next === null) return;
+    cursor = next as Record<string, unknown>;
+  }
+  cursor[last] = value;
 }

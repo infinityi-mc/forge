@@ -48,6 +48,11 @@ export interface HistogramLike {
   record(value: number, attributes?: Record<string, string | number | boolean>): void;
 }
 
+/** Bi-directional counter (e.g. cached JWKS key count). */
+export interface UpDownCounterLike {
+  add(value: number, attributes?: Record<string, string | number | boolean>): void;
+}
+
 export interface MeterLike {
   createCounter?(
     name: string,
@@ -57,10 +62,34 @@ export interface MeterLike {
     name: string,
     options?: { description?: string; unit?: string },
   ): HistogramLike;
+  createUpDownCounter?(
+    name: string,
+    options?: { description?: string; unit?: string },
+  ): UpDownCounterLike;
+}
+
+/**
+ * Minimal structural view of a tracer span. A `forge/telemetry` `Span`
+ * satisfies this (extra methods are ignored), so verification/authorization
+ * can mark failures without importing the telemetry package.
+ */
+export interface SecuritySpan {
+  setAttribute?(key: string, value: string | number | boolean): unknown;
+  setStatus?(status: { readonly code: "ok" | "error"; readonly message?: string }): unknown;
+  recordException?(error: unknown): unknown;
+  end(): void;
+}
+
+export interface TracerLike {
+  startSpan(
+    name: string,
+    options?: { attributes?: Record<string, string | number | boolean | undefined> },
+  ): SecuritySpan;
 }
 
 export interface SecurityTelemetry {
   readonly meter?: MeterLike;
+  readonly tracer?: TracerLike;
 }
 
 export interface SecurityObservation {

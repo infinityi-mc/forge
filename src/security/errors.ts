@@ -67,3 +67,11 @@ export class KeyResolutionError extends SecurityError {
     this.name = "KeyResolutionError";
   }
 }
+
+/** An {@link AuditSink} failed to record a security event. */
+export class AuditError extends SecurityError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AuditError";
+  }
+}

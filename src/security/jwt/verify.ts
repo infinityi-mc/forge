@@ -6,9 +6,15 @@ import {
   TokenExpiredError,
   TokenInvalidError,
 } from "../errors";
+import type { AuditEventInput, AuditLogger } from "../audit/types";
 import type { KeyStore } from "../jwks/types";
 import { createJwksKeyStore, hmacKeyStore, staticKeyStore } from "../jwks/store";
-import type { Principal, TokenVerifier, VerifyOptions } from "../types";
+import type {
+  Principal,
+  SecurityTelemetry,
+  TokenVerifier,
+  VerifyOptions,
+} from "../types";
 import {
   base64UrlDecode,
   decodeUtf8,
@@ -34,8 +40,10 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
   const algorithms = new Set(options.algorithms);
   const issuers = toStringSet(options.issuer, "issuer");
   const audiences = toStringSet(options.audience, "audience");
-  const keyStore = keyStoreFromSource(options.keys);
   const clock = options.clock ?? { now: () => Date.now() };
+  const audit = options.audit;
+  const keyStore = keyStoreFromSource(options.keys, options.telemetry, audit);
+  const tracer = options.telemetry?.tracer;
   const failureCounter = options.telemetry?.meter?.createCounter?.(
     "security.token.verify.failures",
     { description: "JWT verification failures" },
@@ -48,6 +56,7 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
   return {
     async verify(token: string, opts?: VerifyOptions): Promise<Principal> {
       const startedAt = clock.now();
+      const span = tracer?.startSpan("security.token.verify");
       let alg: JwsAlgorithm | undefined;
       let issuer: string | undefined;
       try {
@@ -80,6 +89,18 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
           issuer: principal.issuer,
           outcome: "success",
         });
+        span?.setAttribute?.("security.token.alg", alg);
+        span?.setAttribute?.("security.token.issuer", principal.issuer);
+        span?.setStatus?.({ code: "ok" });
+        await recordTokenAudit(audit, {
+          action: "auth.token.verified",
+          outcome: "success",
+          principal: {
+            subject: principal.subject,
+            issuer: principal.issuer,
+            ...(principal.tenant === undefined ? {} : { tenant: principal.tenant }),
+          },
+        });
         return principal;
       } catch (error) {
         const reason = reasonForError(error);
@@ -89,11 +110,33 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
           issuer: issuer ?? "unknown",
           outcome: "failure",
         });
+        span?.setStatus?.({ code: "error", message: reason });
+        span?.recordException?.(error);
         options.logger?.warn?.("JWT verification failed", { reason });
+        await recordTokenAudit(audit, {
+          action: "auth.token.failed",
+          outcome: "failure",
+          reason,
+        });
         throw normalizeAuthError(error);
+      } finally {
+        span?.end();
       }
     },
   };
+}
+
+/** Audit is best-effort here: a sink failure must never fail verification. */
+async function recordTokenAudit(
+  audit: AuditLogger | undefined,
+  event: AuditEventInput,
+): Promise<void> {
+  if (audit === undefined) return;
+  try {
+    await audit.record(event);
+  } catch {
+    // swallow — observability/audit must not alter the verification outcome
+  }
 }
 
 interface ParsedJws {
@@ -249,8 +292,14 @@ function validateOptions(options: JwtVerifierOptions): void {
   }
 }
 
-function keyStoreFromSource(source: JwtVerifierOptions["keys"]): KeyStore {
-  if ("jwksUri" in source) return createJwksKeyStore(source);
+function keyStoreFromSource(
+  source: JwtVerifierOptions["keys"],
+  telemetry: SecurityTelemetry | undefined,
+  audit: AuditLogger | undefined,
+): KeyStore {
+  if ("jwksUri" in source) {
+    return createJwksKeyStore({ ...source, telemetry, audit });
+  }
   if ("jwks" in source) return staticKeyStore(source.jwks);
   return hmacKeyStore(source.hmacSecret);
 }
