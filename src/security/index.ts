@@ -83,8 +83,9 @@ export type {
   AuthenticateOptions,
   AuthorizeRouteOptions,
   HeadersLike,
-  NextFunction,
+  SecurityHandler,
   SecurityHttpRequest,
+  SecurityMiddleware,
 } from "./http";
 
 export {

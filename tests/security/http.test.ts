@@ -11,33 +11,39 @@ import {
 } from "../../src/security";
 import { authenticate } from "../../src/security/http";
 import { fakePrincipal, testVerifier } from "../../src/security/testing";
-import type { SecurityHttpRequest } from "../../src/security/http";
+import type {
+  SecurityHandler,
+  SecurityHttpRequest,
+} from "../../src/security/http";
+
+const ok: SecurityHandler = () => new Response("ok");
 
 describe("security HTTP middleware seam", () => {
   test("missing and malformed bearer tokens reject", async () => {
     const verifier = testVerifier();
-    const middleware = authenticate({ verifier });
+    const middleware = authenticate({ verifier })(ok);
 
-    await expect(middleware({}, () => undefined)).rejects.toThrow(
+    await expect(middleware({ headers: new Headers() })).rejects.toThrow(
       TokenInvalidError,
     );
     await expect(
-      middleware({ headers: { authorization: "Basic token" } }, () => undefined),
+      middleware({ headers: { authorization: "Basic token" } }),
     ).rejects.toThrow(TokenInvalidError);
   });
 
-  test("valid token attaches req.locals.principal", async () => {
+  test("valid token attaches req.locals.principal and calls next", async () => {
     const principal = fakePrincipal({ subject: "user_2" });
     const req: SecurityHttpRequest = {
       headers: { authorization: "Bearer token" },
+      locals: {},
     };
 
-    await authenticate({ verifier: testVerifier({ principalFor: principal }) })(
-      req,
-      () => undefined,
-    );
+    const res = await authenticate({
+      verifier: testVerifier({ principalFor: principal }),
+    })(ok)(req);
 
     expect(req.locals?.principal).toBe(principal);
+    expect(await res.text()).toBe("ok");
   });
 
   test("successful authentication records an audit event", async () => {
@@ -49,13 +55,14 @@ describe("security HTTP middleware seam", () => {
     });
     const req: SecurityHttpRequest = {
       headers: { authorization: "Bearer token" },
+      locals: {},
     };
 
     await authenticate({
       verifier: testVerifier({ principalFor: principal }),
       audit,
       auditContext: { request: { method: "GET", path: "/reports" } },
-    })(req, () => undefined);
+    })(ok)(req);
 
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]).toMatchObject({
@@ -84,7 +91,7 @@ describe("security HTTP middleware seam", () => {
       authenticate({
         verifier: testVerifier({ principalFor: () => error }),
         audit,
-      })({ headers: { authorization: "Bearer token" } }, () => undefined),
+      })(ok)({ headers: { authorization: "Bearer token" } }),
     ).rejects.toBe(error);
 
     expect(sink.events).toHaveLength(1);
@@ -99,14 +106,14 @@ describe("security HTTP middleware seam", () => {
   test("authorizeRoute allows and calls next on allow", async () => {
     let called = 0;
     const req: SecurityHttpRequest = {
-      locals: {
-        principal: fakePrincipal({ scopes: ["reports:read"] }),
-      },
+      headers: new Headers(),
+      locals: { principal: fakePrincipal({ scopes: ["reports:read"] }) },
     };
 
-    await authorizeRoute(requireScope("reports:read"))(req, () => {
+    await authorizeRoute(requireScope("reports:read"))(() => {
       called++;
-    });
+      return new Response("ok");
+    })(req);
 
     expect(called).toBe(1);
   });
@@ -118,6 +125,7 @@ describe("security HTTP middleware seam", () => {
       idGenerator: () => `audit_${sink.events.length + 1}`,
     });
     const req: SecurityHttpRequest = {
+      headers: new Headers(),
       locals: {
         principal: fakePrincipal({
           scopes: ["reports:read"],
@@ -130,20 +138,20 @@ describe("security HTTP middleware seam", () => {
       audit,
       action: "reports:read",
       resource: "report_1",
-    })(req, () => undefined);
+    })(ok)(req);
 
     await expect(
       authorizeRoute(deny("blocked"), {
         audit,
         action: "reports:write",
-      })(req, () => undefined),
+      })(ok)(req),
     ).rejects.toThrow(AuthorizationError);
 
     await expect(
       authorizeRoute(allow, {
         audit,
         action: "reports:read",
-      })({}, () => undefined),
+      })(ok)({ headers: new Headers() }),
     ).rejects.toThrow(AuthorizationError);
 
     expect(sink.events).toHaveLength(3);
@@ -173,15 +181,16 @@ describe("security HTTP middleware seam", () => {
 
   test("authorizeRoute throws AuthorizationError on deny or missing principal", async () => {
     const req: SecurityHttpRequest = {
+      headers: new Headers(),
       locals: { principal: fakePrincipal() },
     };
 
-    await expect(authorizeRoute(deny("blocked"))(req, () => undefined)).rejects.toThrow(
-      AuthorizationError,
-    );
-    await expect(authorizeRoute(allow)({}, () => undefined)).rejects.toThrow(
-      AuthorizationError,
-    );
+    await expect(
+      authorizeRoute(deny("blocked"))(ok)(req),
+    ).rejects.toThrow(AuthorizationError);
+    await expect(
+      authorizeRoute(allow)(ok)({ headers: new Headers() }),
+    ).rejects.toThrow(AuthorizationError);
   });
 
   test("custom principalKey, action, and async resource options work", async () => {
@@ -190,6 +199,7 @@ describe("security HTTP middleware seam", () => {
     const audit = createAuditRecorder({ sink });
     const req: SecurityHttpRequest = {
       headers: new Headers({ authorization: "Bearer token" }),
+      locals: {},
     };
     let called = 0;
 
@@ -197,10 +207,10 @@ describe("security HTTP middleware seam", () => {
       verifier: testVerifier({ principalFor: principal }),
       principalKey: "actor",
       audit,
-    })(req, () => undefined);
+    })(ok)(req);
 
-    await authorizeRoute(
-      (ctx: { action?: string; resource?: { tenantId: string } }) => {
+    await authorizeRoute<{ tenantId: string }>(
+      (ctx) => {
         expect(ctx.action).toBe("read");
         expect(ctx.resource?.tenantId).toBe("tenant_1");
         return { effect: "allow" };
@@ -215,9 +225,10 @@ describe("security HTTP middleware seam", () => {
           attributes: { trace: "abc" },
         }),
       },
-    )(req, () => {
+    )(() => {
       called++;
-    });
+      return new Response("ok");
+    })(req);
 
     expect(req.locals?.actor).toBe(principal);
     expect(called).toBe(1);
@@ -237,13 +248,15 @@ describe("security HTTP middleware seam", () => {
       },
     };
     const req: SecurityHttpRequest = {
+      headers: new Headers(),
       locals: { principal: fakePrincipal({ scopes: ["reports:read"] }) },
     };
     let called = 0;
 
-    await authorizeRoute(requireScope("reports:read"), { audit })(req, () => {
+    await authorizeRoute(requireScope("reports:read"), { audit })(() => {
       called++;
-    });
+      return new Response("ok");
+    })(req);
     expect(called).toBe(1);
 
     const error = new TokenInvalidError("bad token");
@@ -251,7 +264,7 @@ describe("security HTTP middleware seam", () => {
       authenticate({
         verifier: testVerifier({ principalFor: () => error }),
         audit,
-      })({ headers: { authorization: "Bearer token" } }, () => undefined),
+      })(ok)({ headers: { authorization: "Bearer token" } }),
     ).rejects.toBe(error);
   });
 });

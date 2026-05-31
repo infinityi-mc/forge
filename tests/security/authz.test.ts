@@ -16,6 +16,7 @@ import { fakePrincipal } from "../../src/security/testing";
 
 describe("authorization policies", () => {
   const ctx: AuthzContext = {
+    action: "reports:read",
     principal: fakePrincipal({
       roles: ["admin"],
       scopes: ["reports:read"],
@@ -30,9 +31,18 @@ describe("authorization policies", () => {
     await expect(authorize(requireScope("reports:read"), ctx)).resolves.toEqual({
       effect: "allow",
     });
-    await expect(authorize(requireTenant("tenant_1"), ctx)).resolves.toEqual({
-      effect: "allow",
-    });
+    await expect(
+      authorize(requireTenant(() => "tenant_1"), ctx),
+    ).resolves.toEqual({ effect: "allow" });
+  });
+
+  test("requireRole/requireScope are variadic (any-of)", async () => {
+    await expect(
+      authorize(requireRole("operator", "admin"), ctx),
+    ).resolves.toEqual({ effect: "allow" });
+    await expect(
+      authorize(requireScope("reports:write", "reports:read"), ctx),
+    ).resolves.toEqual({ effect: "allow" });
   });
 
   test("role, scope, and tenant policies deny missing grants", async () => {
@@ -44,10 +54,9 @@ describe("authorization policies", () => {
       effect: "deny",
       reason: "scope_required",
     });
-    await expect(authorize(requireTenant("tenant_2"), ctx)).resolves.toEqual({
-      effect: "deny",
-      reason: "tenant_required",
-    });
+    await expect(
+      authorize(requireTenant(() => "tenant_2"), ctx),
+    ).resolves.toEqual({ effect: "deny", reason: "tenant_required" });
   });
 
   test("allOf short-circuits on the first deny", async () => {
@@ -100,20 +109,25 @@ describe("authorization policies", () => {
     await expect(
       authorize((() => ({ effect: "maybe" })) as any, ctx),
     ).resolves.toEqual({ effect: "deny", reason: "policy_error" });
+    // A deny with no string reason is not a valid Decision → fail closed.
+    await expect(
+      authorize((() => ({ effect: "deny" })) as any, ctx),
+    ).resolves.toEqual({ effect: "deny", reason: "policy_error" });
   });
 
-  test("tenant policy can read a typed resource", async () => {
+  test("tenant policy reads the tenant from a typed resource", async () => {
     interface Resource {
       readonly tenantId: string;
     }
     const resourceCtx: AuthzContext<Resource> = {
+      action: "reports:read",
       principal: ctx.principal,
       resource: { tenantId: "tenant_1" },
     };
 
     await expect(
       authorize(
-        requireTenant<Resource>((current) => current.resource?.tenantId),
+        requireTenant<Resource>((resource) => resource?.tenantId),
         resourceCtx,
       ),
     ).resolves.toEqual({ effect: "allow" });
