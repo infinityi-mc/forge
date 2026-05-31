@@ -24,15 +24,9 @@
  * @module
  */
 
-import {
-  ConfigProviderError,
-  ConfigValidationError,
-} from "../errors";
+import { ConfigProviderError, ConfigValidationError } from "../errors";
 import type { Logger } from "../logger";
-import {
-  emitDynamicUpdate,
-  emitProviderError,
-} from "../observability";
+import { emitDynamicUpdate, emitProviderError } from "../observability";
 import type {
   DynamicConfigProvider,
   DynamicConfigSnapshot,
@@ -68,6 +62,13 @@ export interface DefineDynamicConfigOptions<S extends ConfigSchema> {
     newConfig: Infer<S>,
     changedKeys: readonly string[],
   ) => void;
+  /**
+   * Suppress raw invalid values in structured diagnostics. Defaults
+   * to `true` because dynamic update failures are commonly surfaced
+   * through long-lived structured logs. Secret leaves are always
+   * redacted.
+   */
+  redactReceived?: boolean;
   /**
    * Optional structured logger. Emits:
    * - `warn "Dynamic config updated"` on every snapshot swap.
@@ -170,6 +171,7 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
   const provider = options.provider;
   const propagate = options.propagateProviderErrors === true;
   const logger = options.logger;
+  const redactReceived = options.redactReceived ?? true;
 
   // Step 1 — initial fetch. A throw here is fatal regardless of
   // `propagate`; without an initial snapshot there is no valid view
@@ -185,7 +187,11 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
   }
 
   // Step 2 — validate the initial snapshot.
-  const initial = validateSnapshot(schema, (entry) => initialSnapshot[entry.path]);
+  const initial = validateSnapshot(
+    schema,
+    (entry) => initialSnapshot[entry.path],
+    { redactReceived },
+  );
   if (initial.issues.length > 0) {
     throw new ConfigValidationError(
       `Forge dynamic configuration invalid (provider '${provider.name}') — ${initial.issues.length} issue(s).`,
@@ -226,7 +232,9 @@ export async function defineDynamicConfig<S extends ConfigSchema>(
 
   const onSnapshot = (next: DynamicConfigSnapshot): void => {
     const startedAt = performance.now();
-    const result = validateSnapshot(schema, (entry) => next[entry.path]);
+    const result = validateSnapshot(schema, (entry) => next[entry.path], {
+      redactReceived,
+    });
     if (result.issues.length > 0) {
       const err = new ConfigValidationError(
         `Forge dynamic configuration update invalid (provider '${provider.name}') — ${result.issues.length} issue(s).`,

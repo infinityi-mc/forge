@@ -40,8 +40,8 @@ export interface ConfigDiagnostic {
   readonly reason: string;
   /**
    * Raw value that was seen, when applicable. Always omitted for leaves
-   * whose schema marks them as secret to avoid leaking credentials into
-   * stderr / log aggregators.
+   * whose schema marks them as secret, and omitted for all leaves when
+   * diagnostic received-value redaction is enabled.
    */
   readonly received?: string;
 }
@@ -87,10 +87,7 @@ export class ConfigValidationError extends ConfigError {
 export class ConfigSourceError extends ConfigError {
   readonly source: string;
 
-  constructor(
-    message: string,
-    options: ErrorOptions & { source: string },
-  ) {
+  constructor(message: string, options: ErrorOptions & { source: string }) {
     super(message, options);
     this.name = "ConfigSourceError";
     this.source = options.source;
@@ -106,10 +103,7 @@ export class ConfigSourceError extends ConfigError {
 export class ConfigSchemaError extends ConfigError {
   readonly path?: string;
 
-  constructor(
-    message: string,
-    options?: ErrorOptions & { path?: string },
-  ) {
+  constructor(message: string, options?: ErrorOptions & { path?: string }) {
     super(message, options);
     this.name = "ConfigSchemaError";
     if (options?.path !== undefined) this.path = options.path;
@@ -182,10 +176,7 @@ export class ConfigProviderError extends ConfigError {
 export class ConfigFrozenError extends ConfigError {
   readonly path?: string;
 
-  constructor(
-    message: string,
-    options?: ErrorOptions & { path?: string },
-  ) {
+  constructor(message: string, options?: ErrorOptions & { path?: string }) {
     super(message, options);
     this.name = "ConfigFrozenError";
     if (options?.path !== undefined) this.path = options.path;

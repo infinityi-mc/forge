@@ -31,13 +31,13 @@ export class NumberLeaf extends Leaf<number> {
     if (!Number.isFinite(parsed)) {
       return {
         ok: false,
-        reason: `"${raw}" is not a finite number.`,
+        reason: "Value must be a finite number.",
       };
     }
     if (this.isInt && !Number.isInteger(parsed)) {
       return {
         ok: false,
-        reason: `"${raw}" is not an integer.`,
+        reason: "Value must be an integer.",
       };
     }
     return { ok: true, value: parsed };

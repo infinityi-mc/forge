@@ -20,7 +20,9 @@ describe("defineConfig — happy paths", () => {
         db: { url: t.url.required() },
       },
       {
-        sources: [envSource({ env: { APP_PORT: "8080", DB_URL: "postgres://h/db" } })],
+        sources: [
+          envSource({ env: { APP_PORT: "8080", DB_URL: "postgres://h/db" } }),
+        ],
         throwOnError: true,
       },
     );
@@ -124,6 +126,83 @@ describe("defineConfig — fail-fast diagnostics", () => {
       expect(issues[0]!.received).toBe("99999");
       expect(issues[0]!.reason).toContain("out of bounds");
     }
+  });
+
+  test("redactReceived=true omits raw invalid values from structured diagnostics", () => {
+    try {
+      defineConfig(
+        { app: { port: t.port.required() } },
+        {
+          sources: [envSource({ env: { APP_PORT: "99999" } })],
+          throwOnError: true,
+          redactReceived: true,
+        },
+      );
+      throw new Error("expected ConfigValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      const issues = (err as ConfigValidationError).issues;
+      expect(issues[0]!.received).toBeUndefined();
+      expect(issues[0]!.reason).not.toContain("99999");
+    }
+  });
+
+  test("production environment redacts received by default", () => {
+    try {
+      defineConfig(
+        { app: { port: t.port.required() } },
+        {
+          sources: [envSource({ env: { APP_PORT: "99999" } })],
+          throwOnError: true,
+          environment: "production",
+        },
+      );
+      throw new Error("expected ConfigValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      const issues = (err as ConfigValidationError).issues;
+      expect(issues[0]!.received).toBeUndefined();
+    }
+  });
+
+  test("redactReceived=false opts production diagnostics back into received", () => {
+    try {
+      defineConfig(
+        { app: { port: t.port.required() } },
+        {
+          sources: [envSource({ env: { APP_PORT: "99999" } })],
+          throwOnError: true,
+          environment: "production",
+          redactReceived: false,
+        },
+      );
+      throw new Error("expected ConfigValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      const issues = (err as ConfigValidationError).issues;
+      expect(issues[0]!.received).toBe("99999");
+    }
+  });
+
+  test("redacted fail-fast output does not include raw invalid values", () => {
+    let output = "";
+    expect(() =>
+      defineConfig(
+        { app: { port: t.port.required() } },
+        {
+          sources: [envSource({ env: { APP_PORT: "99999" } })],
+          environment: "production",
+          diagnostics: {
+            stderr: { write: (chunk: string) => (output += chunk) },
+            exit: ((code: number) => {
+              throw new Error(`simulated exit ${code}`);
+            }) as (code: number) => never,
+          },
+        },
+      ),
+    ).toThrow();
+    expect(output).toContain("APP_PORT");
+    expect(output).not.toContain("99999");
   });
 
   test("never echoes the raw value of a secret in diagnostics", () => {

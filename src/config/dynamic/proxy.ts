@@ -49,10 +49,12 @@ export function createSnapshotProxy<T extends object>(ref: SnapshotRef<T>): T {
     getOwnPropertyDescriptor(_target, key) {
       const desc = Object.getOwnPropertyDescriptor(ref.current as object, key);
       if (desc === undefined) return undefined;
-      // The Proxy invariant requires `configurable: true` on the
-      // descriptor returned from this trap unless the target also
-      // declares the property non-configurable. Our target is a
-      // plain `{}` with no own properties, so we widen.
+      // Proxy invariants are checked against the proxy target, not
+      // against `ref.current`. Because our target is a plain `{}` with
+      // no own non-configurable properties, reflected snapshot keys
+      // are virtual properties and must be reported as configurable.
+      // Forwarding the frozen snapshot's `configurable: false` would
+      // violate the invariant for this empty target.
       return { ...desc, configurable: true };
     },
     getPrototypeOf(_target) {
