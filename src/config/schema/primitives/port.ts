@@ -26,13 +26,13 @@ export class PortLeaf extends Leaf<number> {
     if (!Number.isInteger(parsed)) {
       return {
         ok: false,
-        reason: `"${raw}" is not an integer.`,
+        reason: "Value must be an integer.",
       };
     }
     if (parsed < PORT_MIN || parsed > PORT_MAX) {
       return {
         ok: false,
-        reason: `"${raw}" is out of bounds (${PORT_MIN}-${PORT_MAX}).`,
+        reason: `Port is out of bounds (${PORT_MIN}-${PORT_MAX}).`,
       };
     }
     return { ok: true, value: parsed };

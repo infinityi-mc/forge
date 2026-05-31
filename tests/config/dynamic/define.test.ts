@@ -77,6 +77,48 @@ describe("defineDynamicConfig", () => {
     await expect(promise).rejects.toBeInstanceOf(ConfigValidationError);
   });
 
+  test("redacts received values from dynamic diagnostics by default", async () => {
+    try {
+      await defineDynamicConfig(
+        {
+          features: { ratio: t.number.required() },
+        },
+        {
+          provider: staticProvider({
+            "features.ratio": "not-a-number",
+          }),
+        },
+      );
+      throw new Error("expected ConfigValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      const issues = (err as ConfigValidationError).issues;
+      expect(issues[0]!.received).toBeUndefined();
+      expect(issues[0]!.reason).not.toContain("not-a-number");
+    }
+  });
+
+  test("redactReceived=false includes received values in dynamic diagnostics", async () => {
+    try {
+      await defineDynamicConfig(
+        {
+          features: { ratio: t.number.required() },
+        },
+        {
+          provider: staticProvider({
+            "features.ratio": "not-a-number",
+          }),
+          redactReceived: false,
+        },
+      );
+      throw new Error("expected ConfigValidationError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      const issues = (err as ConfigValidationError).issues;
+      expect(issues[0]!.received).toBe("not-a-number");
+    }
+  });
+
   test("atomically swaps the live view when the provider pushes a valid update", async () => {
     const provider = controllableProvider({
       "features.maintenanceMode": "false",
@@ -159,9 +201,12 @@ describe("defineDynamicConfig", () => {
     });
     const lines: { level: string; msg: string; attrs?: unknown }[] = [];
     const logger = {
-      info: (msg: string, attrs?: unknown) => lines.push({ level: "info", msg, attrs }),
-      warn: (msg: string, attrs?: unknown) => lines.push({ level: "warn", msg, attrs }),
-      error: (msg: string, attrs?: unknown) => lines.push({ level: "error", msg, attrs }),
+      info: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "info", msg, attrs }),
+      warn: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "warn", msg, attrs }),
+      error: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "error", msg, attrs }),
     };
     const handle = await defineDynamicConfig(
       { features: { maintenanceMode: t.boolean.default(false) } },
@@ -213,9 +258,12 @@ describe("defineDynamicConfig", () => {
     });
     const lines: { level: string; msg: string; attrs?: unknown }[] = [];
     const logger = {
-      info: (msg: string, attrs?: unknown) => lines.push({ level: "info", msg, attrs }),
-      warn: (msg: string, attrs?: unknown) => lines.push({ level: "warn", msg, attrs }),
-      error: (msg: string, attrs?: unknown) => lines.push({ level: "error", msg, attrs }),
+      info: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "info", msg, attrs }),
+      warn: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "warn", msg, attrs }),
+      error: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "error", msg, attrs }),
     };
     const handle = await defineDynamicConfig(
       { limits: { ratio: t.number.required() } },
@@ -305,9 +353,12 @@ describe("defineDynamicConfig", () => {
     };
     const lines: { level: string; msg: string; attrs?: unknown }[] = [];
     const logger = {
-      info: (msg: string, attrs?: unknown) => lines.push({ level: "info", msg, attrs }),
-      warn: (msg: string, attrs?: unknown) => lines.push({ level: "warn", msg, attrs }),
-      error: (msg: string, attrs?: unknown) => lines.push({ level: "error", msg, attrs }),
+      info: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "info", msg, attrs }),
+      warn: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "warn", msg, attrs }),
+      error: (msg: string, attrs?: unknown) =>
+        lines.push({ level: "error", msg, attrs }),
     };
     const handle = await defineDynamicConfig({} as Record<string, never>, {
       provider: failing,
@@ -351,6 +402,23 @@ describe("defineDynamicConfig", () => {
     await handle.shutdown();
   });
 
+  test("Proxy supports reflective descriptor and key operations", async () => {
+    const handle = await defineDynamicConfig(
+      { features: { maintenanceMode: t.boolean.default(false) } },
+      { provider: staticProvider({ "features.maintenanceMode": "true" }) },
+    );
+
+    const desc = Object.getOwnPropertyDescriptor(handle.values, "features");
+    expect(desc).toBeDefined();
+    expect(desc!.configurable).toBe(true);
+    expect(desc!.enumerable).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptors(handle.values).features,
+    ).toBeDefined();
+    expect(Object.keys(handle.values)).toEqual(["features"]);
+    await handle.shutdown();
+  });
+
   test("Proxy rejects mutations on the live view", async () => {
     const provider = controllableProvider({});
     const handle = await defineDynamicConfig(
@@ -358,8 +426,9 @@ describe("defineDynamicConfig", () => {
       { provider },
     );
     expect(() => {
-      (handle.values as { features: { maintenanceMode: boolean } }).features =
-        { maintenanceMode: true };
+      (handle.values as { features: { maintenanceMode: boolean } }).features = {
+        maintenanceMode: true,
+      };
     }).toThrow(TypeError);
     await handle.shutdown();
   });

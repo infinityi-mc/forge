@@ -66,6 +66,12 @@ export interface DefineConfigOptions {
     width?: number;
   };
   /**
+   * Suppress raw invalid values in structured diagnostics. Defaults
+   * to `true` when the resolved environment is `"production"`, and
+   * `false` otherwise. Secret leaves are always redacted.
+   */
+  redactReceived?: boolean;
+  /**
    * Optional structured logger. When supplied, `defineConfig` emits a
    * single boot-summary line on success — `module`, `boot_time_ms`,
    * `sources`, `loaded_keys`, `redacted_keys`. Values are never
@@ -96,6 +102,7 @@ export function defineConfig<S extends ConfigSchema>(
   const startedAt = performance.now();
   const environment = resolveEnvironment(options);
   const sources = options.sources ?? defaultSources(environment);
+  const redactReceived = options.redactReceived ?? environment === "production";
 
   const { tree, issues, loadedKeys, redactedKeys } = validateSnapshot(
     schema,
@@ -103,6 +110,7 @@ export function defineConfig<S extends ConfigSchema>(
       const lookup: SourceLookup = { path: entry.path, envVar: entry.envVar };
       return readFromSources(sources, lookup);
     },
+    { redactReceived },
   );
 
   if (issues.length > 0) {
@@ -146,7 +154,10 @@ export function defaultSources(environment: string): ConfigSource[] {
 }
 
 function resolveEnvironment(options: DefineConfigOptions): string {
-  if (typeof options.environment === "string" && options.environment.length > 0) {
+  if (
+    typeof options.environment === "string" &&
+    options.environment.length > 0
+  ) {
     return options.environment;
   }
   const env =

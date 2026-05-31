@@ -187,13 +187,65 @@ describe("t.secret", () => {
 });
 
 describe("t.json", () => {
+  interface Feature {
+    readonly enabled: boolean;
+  }
+
+  function isFeature(value: unknown): value is Feature {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { enabled?: unknown }).enabled === "boolean"
+    );
+  }
+
   test("parses JSON strings into typed objects", () => {
-    interface Feature {
-      readonly enabled: boolean;
-    }
     const r = t.json<Feature>().parse('{"enabled": true}');
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.enabled).toBe(true);
+  });
+
+  test("does not structurally validate JSON without an explicit predicate", () => {
+    const array = t.json<Feature>().parse("[]");
+    expect(array.ok).toBe(true);
+    const nil = t.json<Feature>().parse("null");
+    expect(nil.ok).toBe(true);
+  });
+
+  test(".validate rejects structurally invalid JSON", () => {
+    const leaf = t.json<Feature>().validate(isFeature);
+    const bad = leaf.parse("[]");
+    expect(bad.ok).toBe(false);
+    if (!bad.ok)
+      expect(bad.reason).toBe("JSON value failed structural validation.");
+    const ok = leaf.parse('{"enabled": true}');
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.value.enabled).toBe(true);
+  });
+
+  test(".validate supports a custom diagnostic reason", () => {
+    const r = t
+      .json<Feature>()
+      .validate(isFeature, "Expected a feature object.")
+      .parse("null");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("Expected a feature object.");
+  });
+
+  test(".validate state survives leaf chaining", () => {
+    const leaf = t.json<Feature>().validate(isFeature).env("FEATURE_JSON");
+    expect(leaf.envName).toBe("FEATURE_JSON");
+    expect(leaf.parse("[]").ok).toBe(false);
+  });
+
+  test(".validate treats thrown predicates as validation failures", () => {
+    const r = t
+      .json<Feature>()
+      .validate(() => {
+        throw new Error("boom");
+      })
+      .parse('{"enabled": true}');
+    expect(r.ok).toBe(false);
   });
 
   test("rejects malformed JSON", () => {

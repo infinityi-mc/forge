@@ -53,6 +53,14 @@ export interface ValidationResult<S extends ConfigSchema> {
   readonly redactedKeys: string[];
 }
 
+export interface ValidateSnapshotOptions {
+  /**
+   * Omit raw invalid values from diagnostics, even for non-secret
+   * leaves. Secrets are always redacted regardless of this option.
+   */
+  readonly redactReceived?: boolean;
+}
+
 /**
  * Walk every leaf of `schema`, read a raw string for each one via
  * `read`, parse, and assemble the typed tree. Diagnostics are
@@ -75,6 +83,7 @@ export interface ValidationResult<S extends ConfigSchema> {
 export function validateSnapshot<S extends ConfigSchema>(
   schema: S,
   read: SnapshotReader,
+  options: ValidateSnapshotOptions = {},
 ): ValidationResult<S> {
   const leaves = collectLeaves(schema);
   const issues: ConfigDiagnostic[] = [];
@@ -117,13 +126,17 @@ export function validateSnapshot<S extends ConfigSchema>(
       loadedKeys.push(entry.path);
       if (entry.leaf.isSecret) redactedKeys.push(entry.path);
     } else {
+      const includeReceived =
+        !entry.leaf.isSecret && options.redactReceived !== true;
       issues.push({
         path: entry.path,
         envVar: entry.envVar,
         status: "invalid",
         reason: parsed.reason,
-        // Never echo a secret's raw value into diagnostics.
-        ...(entry.leaf.isSecret ? {} : { received: raw }),
+        // Never echo a secret's raw value into diagnostics. Callers
+        // can also suppress raw values globally for production/logging
+        // surfaces where even non-secret values may be sensitive.
+        ...(includeReceived ? { received: raw } : {}),
       });
     }
   }
