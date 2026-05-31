@@ -6,6 +6,7 @@ import {
   memorySink,
   verifyAuditChain,
 } from "../../src/security/audit";
+import type { AuditEvent } from "../../src/security/audit";
 import { AuditError } from "../../src/security/errors";
 import { fakePrincipal } from "../../src/security/testing";
 
@@ -156,6 +157,33 @@ describe("security audit", () => {
     expect("roles" in summary).toBe(false);
     expect(JSON.stringify(summary)).not.toContain("raw-secret");
     expect(JSON.stringify(summary)).not.toContain("raw-token");
+  });
+
+  test("a sink failure does not corrupt the tamper-evident chain", async () => {
+    let failNext = false;
+    const events: AuditEvent[] = [];
+    const logger = createAuditLogger({
+      tamperEvident: true,
+      sink: {
+        record(event) {
+          if (failNext) throw new Error("disk full");
+          events.push(event);
+        },
+      },
+    });
+
+    await logger.record({ action: "a", outcome: "success" });
+    failNext = true;
+    await expect(
+      logger.record({ action: "b", outcome: "success" }),
+    ).rejects.toBeInstanceOf(AuditError);
+    failNext = false;
+    await logger.record({ action: "c", outcome: "success" });
+
+    // The dropped event ("b") must not advance the chain: "c" links back to "a".
+    expect(events).toHaveLength(2);
+    expect(events[1]?.previousHash).toBe(events[0]?.hash);
+    expect(await verifyAuditChain(events)).toBe(true);
   });
 
   test("sink failures surface as AuditError", async () => {

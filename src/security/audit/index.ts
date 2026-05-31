@@ -61,11 +61,11 @@ export function createAuditLogger(options: AuditOptions): AuditLogger {
         : { metadata: redactMetadata(input.metadata, redactPaths) }),
     };
 
+    let hash: string | undefined;
     if (tamperEvident) {
       if (previousHash !== undefined) event = { ...event, previousHash };
-      const hash = await hashAuditEvent(event);
+      hash = await hashAuditEvent(event);
       event = { ...event, hash };
-      previousHash = hash;
     }
 
     try {
@@ -75,6 +75,10 @@ export function createAuditLogger(options: AuditOptions): AuditLogger {
         cause: error,
       });
     }
+
+    // Only advance the chain after the event is durably recorded, so a sink
+    // failure does not leave subsequent events pointing at an unpersisted hash.
+    if (hash !== undefined) previousHash = hash;
   }
 
   return {
