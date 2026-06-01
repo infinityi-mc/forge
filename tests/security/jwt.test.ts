@@ -130,10 +130,12 @@ describe("createJwtVerifier", () => {
       clockToleranceMs: 0,
     });
 
-    await expect(verifier.verify("not-a-jwt")).rejects.toThrow(TokenInvalidError);
-    await expect(verifier.verify(await tamperJwtPayload(signed.token))).rejects.toThrow(
+    await expect(verifier.verify("not-a-jwt")).rejects.toThrow(
       TokenInvalidError,
     );
+    await expect(
+      verifier.verify(await tamperJwtPayload(signed.token)),
+    ).rejects.toThrow(TokenInvalidError);
 
     const noneToken = tokenWithHeader({ alg: "none" }, signed.claims);
     await expect(verifier.verify(noneToken)).rejects.toThrow(
@@ -183,6 +185,59 @@ describe("createJwtVerifier", () => {
     });
     await assertConformance(factory, STANDARD_SECURITY_SCENARIOS);
     await assertConformance(factory, SECURITY_REGRESSION_SCENARIOS);
+  });
+
+  test("rejects oversized tokens before key resolution or signature checks", async () => {
+    const signed = await signTestJwt();
+    let fetches = 0;
+    const verifier = createJwtVerifier({
+      keys: {
+        jwksUri: "https://issuer.test/jwks",
+        fetch: async () => {
+          fetches++;
+          return new Response(JSON.stringify(signed.jwks!));
+        },
+      },
+      algorithms: ["RS256"],
+      issuer: "https://issuer.test",
+      audience: "api",
+      limits: { maxTokenBytes: 64 },
+    });
+    // A token longer than maxTokenBytes is rejected before JWKS fetch/signature work.
+    const huge = `${"a".repeat(100)}.${"b".repeat(100)}.${"c".repeat(100)}`;
+    const error = await verifier.verify(huge).catch((e) => e);
+    expect(error).toBeInstanceOf(TokenInvalidError);
+    expect((error as Error).message).toContain("maximum size");
+    expect(fetches).toBe(0);
+  });
+
+  test("rejects an oversized header segment before JSON parse", async () => {
+    const signed = await signTestJwt();
+    const verifier = createJwtVerifier({
+      keys: { jwks: signed.jwks! },
+      algorithms: ["RS256"],
+      issuer: "https://issuer.test",
+      audience: "api",
+      limits: { maxHeaderBytes: 8 },
+    });
+    const token = tokenWithHeader(
+      { alg: "RS256", kid: "a-very-long-key-id-that-exceeds-the-header-limit" },
+      { sub: "user_1" },
+    );
+    await expect(verifier.verify(token)).rejects.toThrow(TokenInvalidError);
+  });
+
+  test("default limits still admit a normal-sized token", async () => {
+    const signed = await signTestJwt();
+    const verifier = createJwtVerifier({
+      keys: { jwks: signed.jwks! },
+      algorithms: ["RS256"],
+      issuer: "https://issuer.test",
+      audience: "api",
+    });
+    await expect(verifier.verify(signed.token)).resolves.toMatchObject({
+      subject: "user_1",
+    });
   });
 });
 

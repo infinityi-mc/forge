@@ -28,30 +28,30 @@ describe("security JWKS key stores", () => {
     const encryptionUseStore = staticKeyStore({
       keys: [{ ...jwk!, use: "enc" }],
     });
-    await expect(encryptionUseStore.resolve(signed.kid, "RS256")).rejects.toThrow(
-      KeyResolutionError,
-    );
+    await expect(
+      encryptionUseStore.resolve(signed.kid, "RS256"),
+    ).rejects.toThrow(KeyResolutionError);
 
     const encryptionOpsStore = staticKeyStore({
       keys: [{ ...jwk!, key_ops: ["encrypt"] }],
     });
-    await expect(encryptionOpsStore.resolve(signed.kid, "RS256")).rejects.toThrow(
-      KeyResolutionError,
-    );
+    await expect(
+      encryptionOpsStore.resolve(signed.kid, "RS256"),
+    ).rejects.toThrow(KeyResolutionError);
 
     const verifyOpsStore = staticKeyStore({
       keys: [{ ...jwk!, key_ops: ["verify"] }],
     });
-    await expect(verifyOpsStore.resolve(signed.kid, "RS256")).resolves.toBeInstanceOf(
-      CryptoKey,
-    );
+    await expect(
+      verifyOpsStore.resolve(signed.kid, "RS256"),
+    ).resolves.toBeInstanceOf(CryptoKey);
 
     const mixedStore = staticKeyStore({
       keys: [{ ...jwk!, use: "enc" }, jwk!],
     });
-    await expect(mixedStore.resolve(signed.kid, "RS256")).resolves.toBeInstanceOf(
-      CryptoKey,
-    );
+    await expect(
+      mixedStore.resolve(signed.kid, "RS256"),
+    ).resolves.toBeInstanceOf(CryptoKey);
   });
 
   test("createJwksKeyStore caches keys and coordinates unknown-kid refetch", async () => {
@@ -115,6 +115,9 @@ describe("security JWKS key stores", () => {
     const store = createJwksKeyStore({
       jwksUri: "https://issuer.test/.well-known/jwks.json",
       fetch,
+      // This test exercises the failure→success refetch path back-to-back;
+      // disable the unknown-kid throttle so the immediate retry is allowed.
+      cache: { minRefetchIntervalMs: 0 },
       telemetry: {
         meter: {
           createCounter: (name: string) => ({
@@ -152,5 +155,195 @@ describe("security JWKS key stores", () => {
     expect(rotation).toBeDefined();
     expect(rotation?.outcome).toBe("success");
     expect(JSON.stringify(rotation)).toContain("kid-2");
+  });
+
+  test("rejects non-HTTPS jwksUri by default and allows opt-out", async () => {
+    expect(() =>
+      createJwksKeyStore({ jwksUri: "http://issuer.test/jwks" }),
+    ).toThrow(KeyResolutionError);
+    // Opt-out restores http support.
+    expect(() =>
+      createJwksKeyStore({
+        jwksUri: "http://issuer.test/jwks",
+        cache: { allowInsecureHttp: true },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects a jwksUri whose host is not in the allowlist", async () => {
+    expect(() =>
+      createJwksKeyStore({
+        jwksUri: "https://evil.test/jwks",
+        cache: { allowedHosts: ["issuer.test"] },
+      }),
+    ).toThrow(KeyResolutionError);
+  });
+
+  test("redirect following requires an allowed host list", async () => {
+    expect(() =>
+      createJwksKeyStore({
+        jwksUri: "https://issuer.test/jwks",
+        cache: { allowRedirects: true },
+      }),
+    ).toThrow(KeyResolutionError);
+  });
+
+  test("rejects redirect downgrade to http by default", async () => {
+    const signed = await signTestJwt();
+    const response = new Response(JSON.stringify(signed.jwks!));
+    Object.defineProperty(response, "url", {
+      value: "http://issuer.test/redirected-jwks",
+    });
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: async () => response,
+      cache: { allowRedirects: true, allowedHosts: ["issuer.test"] },
+    });
+
+    await expect(store.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+  });
+
+  test("rejects redirect-enabled responses when the final URL cannot be validated", async () => {
+    const signed = await signTestJwt();
+    const response = new Response(JSON.stringify(signed.jwks!));
+    Object.defineProperty(response, "url", { value: "" });
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: async () => response,
+      cache: { allowRedirects: true, allowedHosts: ["issuer.test"] },
+    });
+
+    await expect(store.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+  });
+
+  test("a fetch timeout surfaces as an unhealthy key store", async () => {
+    const fetchLike = (
+      _input: unknown,
+      init?: RequestInit,
+    ): Promise<Response> =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { timeoutMs: 10 },
+    });
+    const health = await store.health();
+    expect(health.status).toBe("unhealthy");
+  });
+
+  test("a slow JWKS body is covered by the fetch timeout", async () => {
+    const signed = await signTestJwt();
+    const fetchLike = async (): Promise<Response> =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("{"));
+            // Keep the body open forever; the key store timeout must abort the
+            // body read rather than only timing out response headers.
+          },
+        }),
+      );
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { timeoutMs: 10 },
+    });
+
+    await expect(store.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+  });
+
+  test("rejects a JWKS response larger than the size cap", async () => {
+    const signed = await signTestJwt();
+    const big = JSON.stringify(signed.jwks!) + " ".repeat(2_000);
+    const fetchLike = async (): Promise<Response> =>
+      new Response(big, { headers: { "content-length": String(big.length) } });
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { maxResponseBytes: 512 },
+    });
+    await expect(store.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
+  });
+
+  test("does not refetch for a flood of distinct unknown kids within the throttle window", async () => {
+    const signed = await signTestJwt({ kid: "k1" });
+    let fetches = 0;
+    const fetchLike = async (): Promise<Response> => {
+      fetches++;
+      return new Response(JSON.stringify(signed.jwks!));
+    };
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { minRefetchIntervalMs: 60_000 },
+    });
+    await store.resolve("k1", "RS256");
+    fetches = 0;
+
+    for (let i = 0; i < 10; i++) {
+      await store.resolve(`unknown-${i}`, "RS256").catch(() => undefined);
+    }
+    // First unknown kid forces one refetch; the rest are throttled.
+    expect(fetches).toBe(1);
+  });
+
+  test("a failing JWKS endpoint is not hammered by a flood of unknown kids", async () => {
+    const signed = await signTestJwt({ kid: "k1" });
+    let fetches = 0;
+    const fetchLike = async (): Promise<Response> => {
+      fetches++;
+      if (fetches === 1) return new Response(JSON.stringify(signed.jwks!));
+      // Every forced refetch after priming fails (IdP outage).
+      return new Response("down", { status: 503 });
+    };
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { minRefetchIntervalMs: 60_000 },
+    });
+    await store.resolve("k1", "RS256");
+    fetches = 0;
+
+    for (let i = 0; i < 10; i++) {
+      await store.resolve(`unknown-${i}`, "RS256").catch(() => undefined);
+    }
+    // Throttle advances even though the forced refetch failed, so the outage
+    // does not turn into a per-request fetch amplifier.
+    expect(fetches).toBe(1);
+  });
+
+  test("caps a JWKS response that omits content-length", async () => {
+    const signed = await signTestJwt();
+    const big = JSON.stringify(signed.jwks!) + " ".repeat(4_000);
+    const fetchLike = async (): Promise<Response> =>
+      // ReadableStream body with no content-length header.
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(big));
+            controller.close();
+          },
+        }),
+      );
+    const store = createJwksKeyStore({
+      jwksUri: "https://issuer.test/jwks",
+      fetch: fetchLike,
+      cache: { maxResponseBytes: 512 },
+    });
+    await expect(store.resolve(signed.kid, "RS256")).rejects.toThrow(
+      KeyResolutionError,
+    );
   });
 });

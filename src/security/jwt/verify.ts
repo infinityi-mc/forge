@@ -29,11 +29,33 @@ import {
 import type {
   ClaimMapping,
   JwtHeader,
+  JwtSizeLimits,
   JwtVerifierOptions,
   JwsAlgorithm,
 } from "./types";
 
 const DEFAULT_CLOCK_TOLERANCE_MS = 60_000;
+
+const DEFAULT_MAX_TOKEN_BYTES = 8192;
+const DEFAULT_MAX_HEADER_BYTES = 1024;
+const DEFAULT_MAX_PAYLOAD_BYTES = 8192;
+const DEFAULT_MAX_DECODED_JSON_BYTES = 8192;
+
+interface ResolvedSizeLimits {
+  readonly maxTokenBytes: number;
+  readonly maxHeaderBytes: number;
+  readonly maxPayloadBytes: number;
+  readonly maxDecodedJsonBytes: number;
+}
+
+function resolveSizeLimits(limits: JwtSizeLimits | undefined): ResolvedSizeLimits {
+  return {
+    maxTokenBytes: limits?.maxTokenBytes ?? DEFAULT_MAX_TOKEN_BYTES,
+    maxHeaderBytes: limits?.maxHeaderBytes ?? DEFAULT_MAX_HEADER_BYTES,
+    maxPayloadBytes: limits?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
+    maxDecodedJsonBytes: limits?.maxDecodedJsonBytes ?? DEFAULT_MAX_DECODED_JSON_BYTES,
+  };
+}
 
 export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
   validateOptions(options);
@@ -41,6 +63,7 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
   const issuers = toStringSet(options.issuer, "issuer");
   const audiences = toStringSet(options.audience, "audience");
   const clock = options.clock ?? { now: () => Date.now() };
+  const sizeLimits = resolveSizeLimits(options.limits);
   const audit = options.audit;
   const keyStore = keyStoreFromSource(options.keys, options.telemetry, audit);
   const tracer = options.telemetry?.tracer;
@@ -60,7 +83,7 @@ export function createJwtVerifier(options: JwtVerifierOptions): TokenVerifier {
       let alg: JwsAlgorithm | undefined;
       let issuer: string | undefined;
       try {
-        const parsed = parseCompactJws(token);
+        const parsed = parseCompactJws(token, sizeLimits);
         alg = validateAlgorithm(parsed.header, algorithms);
         const key = await keyStore.resolve(parsed.header.kid, alg);
         const valid = await verifyJwsSignature(
@@ -146,7 +169,10 @@ interface ParsedJws {
   readonly signature: Uint8Array;
 }
 
-function parseCompactJws(token: string): ParsedJws {
+function parseCompactJws(token: string, limits: ResolvedSizeLimits): ParsedJws {
+  if (token.length > limits.maxTokenBytes) {
+    throw new TokenInvalidError("JWT exceeds maximum size");
+  }
   const parts = token.split(".");
   if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
     throw new TokenInvalidError("JWT must be a compact JWS");
@@ -157,8 +183,22 @@ function parseCompactJws(token: string): ParsedJws {
       string,
       string,
     ];
-    const header = JSON.parse(decodeUtf8(base64UrlDecode(encodedHeader)));
-    const claims = JSON.parse(decodeUtf8(base64UrlDecode(encodedPayload)));
+    if (
+      encodedHeader.length > limits.maxHeaderBytes ||
+      encodedPayload.length > limits.maxPayloadBytes
+    ) {
+      throw new TokenInvalidError("JWT segment exceeds maximum size");
+    }
+    const decodedHeader = base64UrlDecode(encodedHeader);
+    const decodedPayload = base64UrlDecode(encodedPayload);
+    if (
+      decodedHeader.length > limits.maxDecodedJsonBytes ||
+      decodedPayload.length > limits.maxDecodedJsonBytes
+    ) {
+      throw new TokenInvalidError("JWT segment exceeds maximum size");
+    }
+    const header = JSON.parse(decodeUtf8(decodedHeader));
+    const claims = JSON.parse(decodeUtf8(decodedPayload));
     if (typeof header !== "object" || header === null || Array.isArray(header)) {
       throw new TokenInvalidError("JWT header must be an object");
     }

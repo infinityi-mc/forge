@@ -30,12 +30,16 @@ export {
   apiKeyFingerprint,
   createApiKeyVerifier,
   createJwtVerifier,
+  generateApiKey,
 } from "./jwt";
 export type {
+  ApiKeyFingerprintOptions,
   ApiKeyLookupResult,
+  ApiKeyPolicy,
   ApiKeyVerifierOptions,
   ClaimMapping,
   JwtHeader,
+  JwtSizeLimits,
   JwtVerifierOptions,
   JwsAlgorithm,
 } from "./jwt";
@@ -77,6 +81,7 @@ export type {
   AuditSink,
   LogSinkOptions,
   MemoryAuditSink,
+  VerifyAuditChainOptions,
 } from "./audit";
 
 export {

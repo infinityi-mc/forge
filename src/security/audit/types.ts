@@ -1,3 +1,4 @@
+import type { Secret } from "../../config/secret";
 import type { Clock, LoggerLike, Principal } from "../types";
 
 /** Outcome of an audited security decision. */
@@ -41,7 +42,10 @@ export interface AuditEvent {
  * falls back to {@link AuditOptions.correlation}; `hash`/`previousHash` are
  * filled by the logger when tamper-evidence is enabled.
  */
-export type AuditEventInput = Omit<AuditEvent, "at" | "hash" | "previousHash"> & {
+export type AuditEventInput = Omit<
+  AuditEvent,
+  "at" | "hash" | "previousHash"
+> & {
   readonly at?: Date;
 };
 
@@ -64,6 +68,13 @@ export interface AuditOptions {
   readonly redactReplacement?: string;
   /** Hash-chain each record to the previous one for tamper-evidence. */
   readonly tamperEvident?: boolean;
+  /**
+   * Server-side secret. Requires `tamperEvident: true`; otherwise
+   * `createAuditLogger` throws. When set, chain hashes are HMAC-SHA-256 keyed
+   * with this secret, so an attacker who rewrites the store cannot recompute a
+   * valid chain without it.
+   */
+  readonly signingSecret?: Secret<string>;
   /** Pulls a correlation id (traceId / `x-request-id`) at record time. */
   readonly correlation?: () => string | undefined;
   readonly clock?: Clock;

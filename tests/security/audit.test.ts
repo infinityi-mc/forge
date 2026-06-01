@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   auditPrincipal,
   createAuditLogger,
+  hashAuditEvent,
   logSink,
   memorySink,
   verifyAuditChain,
 } from "../../src/security/audit";
 import type { AuditEvent } from "../../src/security/audit";
 import { AuditError } from "../../src/security/errors";
+import { Secret } from "../../src/config/secret";
 import { fakePrincipal } from "../../src/security/testing";
 
 describe("security audit", () => {
@@ -91,6 +93,71 @@ describe("security audit", () => {
       sink.events[1]!,
     ];
     expect(await verifyAuditChain(tampered)).toBe(false);
+  });
+
+  test("plain hash chain re-verifies after a full rewrite (consistency only)", async () => {
+    const sink = memorySink();
+    const logger = createAuditLogger({ sink, tamperEvident: true });
+    await logger.record({ action: "auth.token.verified", outcome: "success" });
+
+    // An attacker who rewrites the whole store recomputes the chain; plain
+    // hashing cannot detect this — it only proves internal consistency.
+    const original = sink.events[0]!;
+    const forged: AuditEvent = { ...original, outcome: "failure" };
+    const { hash: _h, ...rest } = forged;
+    const recomputed = await hashAuditEvent(rest as AuditEvent);
+    expect(
+      await verifyAuditChain([{ ...rest, hash: recomputed } as AuditEvent]),
+    ).toBe(true);
+  });
+
+  test("signingSecret requires tamperEvident logging", () => {
+    expect(() =>
+      createAuditLogger({
+        sink: memorySink(),
+        signingSecret: new Secret("audit-signing-key"),
+      }),
+    ).toThrow(AuditError);
+  });
+
+  test("HMAC-signed chain rejects rewritten events without the secret", async () => {
+    const secret = new Secret("audit-signing-key");
+    const sink = memorySink();
+    const logger = createAuditLogger({
+      sink,
+      tamperEvident: true,
+      signingSecret: secret,
+    });
+    await logger.record({ action: "auth.token.verified", outcome: "success" });
+    await logger.record({ action: "authz.allowed", outcome: "success" });
+
+    // Verifies only with the secret.
+    expect(await verifyAuditChain(sink.events, { secret })).toBe(true);
+    expect(await verifyAuditChain(sink.events)).toBe(false);
+
+    // An attacker recomputes hashes with plain SHA-256 (no secret) — rejected.
+    const forged: AuditEvent = { ...sink.events[0]!, outcome: "failure" };
+    const { hash: _h, ...rest } = forged;
+    const plainHash = await hashAuditEvent(rest as AuditEvent);
+    expect(
+      await verifyAuditChain([{ ...rest, hash: plainHash } as AuditEvent], {
+        secret,
+      }),
+    ).toBe(false);
+  });
+
+  test("expectedHead checkpoint fails verification on mismatch", async () => {
+    const sink = memorySink();
+    const logger = createAuditLogger({ sink, tamperEvident: true });
+    await logger.record({ action: "auth.token.verified", outcome: "success" });
+    const head = sink.events[0]!.hash!;
+
+    expect(await verifyAuditChain(sink.events, { expectedHead: head })).toBe(
+      true,
+    );
+    expect(
+      await verifyAuditChain(sink.events, { expectedHead: "not-the-head" }),
+    ).toBe(false);
   });
 
   test("records serialize across concurrent callers deterministically", async () => {

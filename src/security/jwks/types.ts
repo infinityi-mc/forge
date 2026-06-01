@@ -37,6 +37,25 @@ export interface JwksCacheOptions {
   readonly ttlMs?: number;
   readonly minRefetchIntervalMs?: number;
   readonly resilience?: PipelineLike;
+  /**
+   * How long an unresolved `(kid, alg)` miss is remembered so a flood of
+   * unknown `kid`s cannot each force a JWKS refetch. Defaults to
+   * `minRefetchIntervalMs`.
+   */
+  readonly negativeKidTtlMs?: number;
+  /** Outbound JWKS fetch timeout in ms (AbortController). Defaults to 5000. */
+  readonly timeoutMs?: number;
+  /** Max JWKS response size in bytes, rejected before JSON parse. Defaults to 1 MiB. */
+  readonly maxResponseBytes?: number;
+  /** If set, the JWKS host (and any redirect target) must be in this list. */
+  readonly allowedHosts?: readonly string[];
+  /** Allow `http:` JWKS URIs. Defaults to false (HTTPS required). */
+  readonly allowInsecureHttp?: boolean;
+  /**
+   * Follow HTTP redirects when fetching JWKS. Defaults to false (rejected).
+   * Requires `allowedHosts` so redirect targets can be revalidated.
+   */
+  readonly allowRedirects?: boolean;
 }
 
 export interface HealthResult {
