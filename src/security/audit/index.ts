@@ -25,6 +25,7 @@ export type {
   MemoryAuditSink,
 } from "./types";
 export { hashAuditEvent, verifyAuditChain } from "./chain";
+export type { VerifyAuditChainOptions } from "./chain";
 
 const REDACTED = "[REDACTED]";
 const realClock: Clock = { now: () => Date.now() };
@@ -44,6 +45,9 @@ export function createAuditLogger(options: AuditOptions): AuditLogger {
   const redactPaths = options.redact ?? [];
   const redactToken = options.redactReplacement ?? REDACTED;
   const tamperEvident = options.tamperEvident === true;
+  if (options.signingSecret !== undefined && !tamperEvident) {
+    throw new AuditError("signingSecret requires tamperEvident audit logging");
+  }
   let previousHash: string | undefined;
   let tail: Promise<unknown> = Promise.resolve();
 
@@ -59,13 +63,15 @@ export function createAuditLogger(options: AuditOptions): AuditLogger {
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(input.metadata === undefined
         ? {}
-        : { metadata: redactMetadata(input.metadata, redactPaths, redactToken) }),
+        : {
+            metadata: redactMetadata(input.metadata, redactPaths, redactToken),
+          }),
     };
 
     let hash: string | undefined;
     if (tamperEvident) {
       if (previousHash !== undefined) event = { ...event, previousHash };
-      hash = await hashAuditEvent(event);
+      hash = await hashAuditEvent(event, options.signingSecret);
       event = { ...event, hash };
     }
 

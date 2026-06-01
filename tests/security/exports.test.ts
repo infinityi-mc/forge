@@ -20,6 +20,8 @@ describe("security exports", () => {
     expect(jwt.createJwtVerifier).toBeFunction();
     expect(jwt.createApiKeyVerifier).toBeFunction();
     expect(jwt.apiKeyFingerprint).toBeFunction();
+    expect(jwt.generateApiKey).toBeFunction();
+    expect(security.generateApiKey).toBeFunction();
     expect(authz.authorize).toBeFunction();
     expect(authz.requireRole).toBeFunction();
     expect(audit.createAuditLogger).toBeFunction();
