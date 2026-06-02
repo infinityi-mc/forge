@@ -75,6 +75,12 @@ describe("createHttpClient — request shaping", () => {
     expect(() => createHttpClient({ baseUrl: "not a url" })).toThrow(RequestError);
   });
 
+  test("throws synchronously when baseUrl protocol is not in allowedProtocols", () => {
+    expect(() =>
+      createHttpClient({ baseUrl: "https://api.test", allowedProtocols: ["http:"] }),
+    ).toThrow(RequestError);
+  });
+
   test("extend() inherits config and applies overrides", async () => {
     const mock = createMockServer();
     mock.on("GET", "/whoami", { body: { tenant: "acme" } });

@@ -137,15 +137,29 @@ export function createHttpClient(options: HttpClientOptions = {}): HttpClient {
 }
 
 function resolveOptions(options: HttpClientOptions): ResolvedOptions {
-  if (options.baseUrl !== undefined && !isValidUrl(options.baseUrl)) {
-    throw new RequestError(`invalid baseUrl: ${options.baseUrl}`);
+  const allowedProtocols = options.allowedProtocols ?? ["http:", "https:"];
+  // Fail-fast at construction: a malformed baseUrl, or one whose own protocol
+  // isn't permitted, is a configuration mistake — surface it now rather than
+  // on every subsequent request via enforceUrlPolicy.
+  if (options.baseUrl !== undefined) {
+    let baseUrl: URL;
+    try {
+      baseUrl = new URL(options.baseUrl);
+    } catch (error) {
+      throw new RequestError(`invalid baseUrl: ${options.baseUrl}`, { cause: error });
+    }
+    if (!allowedProtocols.includes(baseUrl.protocol)) {
+      throw new RequestError(
+        `baseUrl protocol ${baseUrl.protocol} is not in allowedProtocols`,
+      );
+    }
   }
   return {
     baseUrl: options.baseUrl,
     // Strict by default: a configured baseUrl pins the client to that origin
     // unless the caller explicitly opts into absolute cross-origin URLs.
     allowAbsoluteUrls: options.allowAbsoluteUrls ?? false,
-    allowedProtocols: options.allowedProtocols ?? ["http:", "https:"],
+    allowedProtocols,
     allowedHosts: options.allowedHosts ?? [],
     defaultHeaders: options.defaultHeaders ?? {},
     timeoutMs: options.timeoutMs,
@@ -374,15 +388,6 @@ function isRawBody(body: unknown): boolean {
     body instanceof ReadableStream ||
     ArrayBuffer.isView(body)
   );
-}
-
-function isValidUrl(value: string): boolean {
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function hostOf(url: string): string {
