@@ -51,6 +51,9 @@ import type {
 /** Resolved, defaulted view of {@link HttpClientOptions}. */
 interface ResolvedOptions {
   readonly baseUrl?: string;
+  readonly allowAbsoluteUrls: boolean;
+  readonly allowedProtocols: readonly string[];
+  readonly allowedHosts: readonly string[];
   readonly defaultHeaders: Record<string, string>;
   readonly timeoutMs?: number;
   readonly resilience?: PipelineLike;
@@ -88,7 +91,7 @@ export function createHttpClient(options: HttpClientOptions = {}): HttpClient {
 
   async function request<T>(req: ClientRequest): Promise<HttpResponse<T>> {
     const method = (req.method ?? "GET").toUpperCase();
-    const url = buildUrl(resolved.baseUrl, req.url, req.query);
+    const url = buildUrl(resolved, req.url, req.query);
     const { headers, body } = buildBody(resolved, req, method);
     const serverAddress = hostOf(url);
 
@@ -139,6 +142,11 @@ function resolveOptions(options: HttpClientOptions): ResolvedOptions {
   }
   return {
     baseUrl: options.baseUrl,
+    // Strict by default: a configured baseUrl pins the client to that origin
+    // unless the caller explicitly opts into absolute cross-origin URLs.
+    allowAbsoluteUrls: options.allowAbsoluteUrls ?? false,
+    allowedProtocols: options.allowedProtocols ?? ["http:", "https:"],
+    allowedHosts: options.allowedHosts ?? [],
     defaultHeaders: options.defaultHeaders ?? {},
     timeoutMs: options.timeoutMs,
     resilience: options.resilience,
@@ -241,16 +249,21 @@ function buildBody(
 }
 
 function buildUrl(
-  baseUrl: string | undefined,
+  resolved: Pick<
+    ResolvedOptions,
+    "baseUrl" | "allowAbsoluteUrls" | "allowedProtocols" | "allowedHosts"
+  >,
   url: string,
   query: ClientInit["query"],
 ): string {
+  const { baseUrl } = resolved;
   let resolvedUrl: URL;
   try {
     resolvedUrl = baseUrl ? new URL(url, baseUrl) : new URL(url);
   } catch (error) {
     throw new RequestError(`invalid request url: ${url}`, { cause: error });
   }
+  enforceUrlPolicy(resolved, resolvedUrl);
   if (query) {
     const params =
       query instanceof URLSearchParams
@@ -259,6 +272,33 @@ function buildUrl(
     params.forEach((value, key) => resolvedUrl.searchParams.append(key, value));
   }
   return resolvedUrl.toString();
+}
+
+/**
+ * Constrain a resolved request URL to the configured policy (SSRF guard):
+ * an allowed protocol always, and — when `baseUrl` is set and the caller has
+ * not opted into `allowAbsoluteUrls` — the same origin as `baseUrl` (or an
+ * explicitly `allowedHosts` peer). Absolute URLs that escape the configured
+ * upstream are the documented attack vector, so they fail closed here.
+ */
+function enforceUrlPolicy(
+  resolved: Pick<
+    ResolvedOptions,
+    "baseUrl" | "allowAbsoluteUrls" | "allowedProtocols" | "allowedHosts"
+  >,
+  url: URL,
+): void {
+  if (!resolved.allowedProtocols.includes(url.protocol)) {
+    throw new RequestError(`unsupported request url protocol: ${url.protocol}`);
+  }
+  if (!resolved.baseUrl || resolved.allowAbsoluteUrls) return;
+
+  const base = new URL(resolved.baseUrl);
+  if (url.origin !== base.origin && !resolved.allowedHosts.includes(url.hostname)) {
+    throw new RequestError(
+      `request url must stay within baseUrl origin (${base.origin}): ${url.origin}`,
+    );
+  }
 }
 
 function toSearchParams(
