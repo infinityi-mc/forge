@@ -75,6 +75,12 @@ describe("createHttpClient — request shaping", () => {
     expect(() => createHttpClient({ baseUrl: "not a url" })).toThrow(RequestError);
   });
 
+  test("throws synchronously when baseUrl protocol is not in allowedProtocols", () => {
+    expect(() =>
+      createHttpClient({ baseUrl: "https://api.test", allowedProtocols: ["http:"] }),
+    ).toThrow(RequestError);
+  });
+
   test("extend() inherits config and applies overrides", async () => {
     const mock = createMockServer();
     mock.on("GET", "/whoami", { body: { tenant: "acme" } });
@@ -87,6 +93,77 @@ describe("createHttpClient — request shaping", () => {
 
     await scoped.get("/whoami");
     expect(mock.requests[0]!.headers.get("x-tenant")).toBe("acme");
+  });
+});
+
+describe("createHttpClient — url policy (SSRF guard)", () => {
+  test("rejects an absolute request url to another origin by default", async () => {
+    const mock = createMockServer();
+    const client = createHttpClient({ baseUrl: "https://api.test", fetch: mock.fetch });
+
+    const error = (await client
+      .get("https://evil.test/steal")
+      .catch((e) => e)) as RequestError;
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error.message).toContain("baseUrl origin");
+    expect(mock.count).toBe(0);
+  });
+
+  test("rejects a non-http(s) protocol by default", async () => {
+    const mock = createMockServer();
+    const client = createHttpClient({ baseUrl: "https://api.test", fetch: mock.fetch });
+
+    const error = (await client
+      .get("file:///etc/passwd")
+      .catch((e) => e)) as RequestError;
+    expect(error).toBeInstanceOf(RequestError);
+    expect(error.message).toContain("protocol");
+    expect(mock.count).toBe(0);
+  });
+
+  test("allows an absolute same-origin url", async () => {
+    const mock = createMockServer();
+    mock.on("GET", "/users/1", { body: { id: 1 } });
+    const client = createHttpClient({ baseUrl: "https://api.test", fetch: mock.fetch });
+
+    const res = await client.get<{ id: number }>("https://api.test/users/1");
+    expect(res.body.id).toBe(1);
+  });
+
+  test("allowAbsoluteUrls opt-in permits a cross-origin absolute url", async () => {
+    const mock = createMockServer();
+    mock.on("GET", "/steal", { body: { ok: true } });
+    const client = createHttpClient({
+      baseUrl: "https://api.test",
+      allowAbsoluteUrls: true,
+      fetch: mock.fetch,
+    });
+
+    const res = await client.get<{ ok: boolean }>("https://other.test/steal");
+    expect(res.body.ok).toBe(true);
+    expect(mock.requests[0]!.url).toBe("https://other.test/steal");
+  });
+
+  test("allowedHosts opt-in permits a named peer origin", async () => {
+    const mock = createMockServer();
+    mock.on("GET", "/health", { body: { ok: true } });
+    const client = createHttpClient({
+      baseUrl: "https://api.test",
+      allowedHosts: ["peer.test"],
+      fetch: mock.fetch,
+    });
+
+    const res = await client.get<{ ok: boolean }>("https://peer.test/health");
+    expect(res.body.ok).toBe(true);
+  });
+
+  test("query appending still works after origin enforcement", async () => {
+    const mock = createMockServer();
+    mock.on("GET", "/search", { body: [] });
+    const client = createHttpClient({ baseUrl: "https://api.test", fetch: mock.fetch });
+
+    await client.get("/search", { query: { q: "forge" } });
+    expect(new URL(mock.requests[0]!.url).searchParams.get("q")).toBe("forge");
   });
 });
 

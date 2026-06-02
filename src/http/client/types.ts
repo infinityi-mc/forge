@@ -48,6 +48,25 @@ export interface HttpClient {
 export interface HttpClientOptions {
   /** Base URL relative request paths resolve against. Validated at construction. */
   readonly baseUrl?: string;
+  /**
+   * Allow a request URL to resolve to an origin other than `baseUrl`'s.
+   * Defaults to `false` when `baseUrl` is set: an absolute request URL that
+   * points at a different origin is rejected with a {@link RequestError},
+   * keeping a service client pinned to its configured upstream (SSRF guard).
+   * Has no effect when `baseUrl` is unset (every URL must be absolute then).
+   */
+  readonly allowAbsoluteUrls?: boolean;
+  /**
+   * Permitted URL protocols for resolved request URLs. Defaults to
+   * `["http:", "https:"]`; anything else is rejected with a {@link RequestError}.
+   */
+  readonly allowedProtocols?: readonly string[];
+  /**
+   * Extra hostnames accepted alongside `baseUrl`'s origin when
+   * `allowAbsoluteUrls` is `false`. Lets a client reach a small set of known
+   * peers without opening up to arbitrary origins.
+   */
+  readonly allowedHosts?: readonly string[];
   /** Headers merged into every request (per-request headers win). */
   readonly defaultHeaders?: Record<string, string>;
   /** Per-request timeout, backed by an `AbortSignal` that cancels the socket. */

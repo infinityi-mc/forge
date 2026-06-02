@@ -201,6 +201,54 @@ describe("bodyLimit", () => {
     const res = await testClient(router).post("/", { a: 1 });
     expect(res.status).toBe(200);
   });
+
+  test("caps a streaming body with no Content-Length at read time", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .use(bodyLimit({ maxBytes: 8 }))
+      .post("/", async (req) => new Response(await req.text()));
+    // A ReadableStream body is sent chunked — no Content-Length header — so it
+    // slips past the header check and must be caught as bytes are read.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(1024)));
+        controller.close();
+      },
+    });
+    const res = await testClient(router).fetch("/", {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(413);
+    expect(res.headers.get("content-type")).toContain("application/problem+json");
+  });
+
+  test("an under-reported Content-Length does not bypass the read-time cap", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .use(bodyLimit({ maxBytes: 8 }))
+      .post("/", async (req) => new Response(await req.text()));
+    const res = await testClient(router).fetch("/", {
+      method: "POST",
+      headers: { "content-length": "4" }, // lies: actual body is 1024 bytes
+      body: "x".repeat(1024),
+    });
+    expect(res.status).toBe(413);
+  });
+
+  test("rejects a malformed Content-Length", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .use(bodyLimit({ maxBytes: 1024 }))
+      .post("/", () => new Response("ok"));
+    const res = await testClient(router).fetch("/", {
+      method: "POST",
+      headers: { "content-length": "not-a-number" },
+      body: "small",
+    });
+    expect(res.status).toBe(413);
+  });
 });
 
 describe("rateLimit (structural seam)", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRouter } from "../../src/http/server";
-import { validate, problemDetails } from "../../src/http/middleware";
+import { validate, problemDetails, bodyLimit } from "../../src/http/middleware";
 import { testClient } from "../../src/http/testing";
 import { ValidationError } from "../../src/http/errors";
 import { objectSchema } from "./_helpers";
@@ -94,5 +94,25 @@ describe("validate() + problemDetails — 422 mapping", () => {
     const body = (await res.json()) as { status: number; errors: unknown };
     expect(body.status).toBe(422);
     expect(body.errors).toEqual([{ path: ["qty"], message: "expected number" }]);
+  });
+
+  test("an oversized body under bodyLimit maps to 413, not a 422 validation error", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .use(bodyLimit({ maxBytes: 8 }))
+      .post(
+        "/orders",
+        validate({ body: objectSchema<{ sku: string }>({ sku: "string" }) }),
+        () => new Response("ok"),
+      );
+    // Under-reported length slips the header check; validate() reads the body
+    // through the bounded reader, which throws 413 — and must not be masked
+    // as a 422 malformed-body error.
+    const res = await testClient(router).fetch("/orders", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": "4" },
+      body: JSON.stringify({ sku: "x".repeat(1024) }),
+    });
+    expect(res.status).toBe(413);
   });
 });

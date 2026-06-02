@@ -20,8 +20,9 @@
  * @module
  */
 
-import { ProblemError, ValidationError } from "../errors";
+import { HttpError, ProblemError, ValidationError } from "../errors";
 import { renderProblem } from "../problem/render";
+import { applyBodyLimit } from "../server/request";
 import type { Logger } from "../observability";
 import type { Handler, HttpRequest, Middleware } from "../types";
 import type { Schema } from "../server/types";
@@ -183,21 +184,30 @@ export interface BodyLimitOptions {
 }
 
 /**
- * Reject requests whose declared `Content-Length` exceeds `maxBytes` with a
- * `413` RFC 7807 problem. (Streaming bodies without a length are passed
- * through — enforce those at read time.)
+ * Reject oversized request bodies with a `413` RFC 7807 problem. A declared
+ * `Content-Length` over `maxBytes` (or a malformed/negative one) is rejected
+ * up front; bodies with a missing or under-reported length are then capped
+ * **at read time** via {@link applyBodyLimit}, so `req.json()`/`req.text()`
+ * (and `validate({ body })`) cannot buffer past the limit. Handlers that read
+ * `req.raw` directly bypass the cap.
  */
 export function bodyLimit(options: BodyLimitOptions): Middleware {
   const max = options.maxBytes;
   return (next: Handler): Handler =>
     (req) => {
       const length = req.headers.get("content-length");
-      if (length !== null && Number(length) > max) {
-        return renderProblem({
-          status: 413,
-          detail: `Request body exceeds the ${max}-byte limit`,
-        });
+      if (length !== null) {
+        const declared = Number(length);
+        // Reject an over-limit, malformed, or negative declared length up front.
+        if (!Number.isFinite(declared) || declared < 0 || declared > max) {
+          return renderProblem({
+            status: 413,
+            detail: `Request body exceeds the ${max}-byte limit`,
+          });
+        }
       }
+      // Cap missing/under-reported lengths as the body is actually read.
+      applyBodyLimit(req, max);
       return next(req);
     };
 }
@@ -280,6 +290,9 @@ export function validate(options: ValidateOptions): Middleware {
       }
       if (options.body) {
         const raw = await req.json().catch((cause: unknown) => {
+          // A framework error (e.g. a 413 from bodyLimit's read-time cap) must
+          // surface as-is, not be masked as a 422 malformed-body validation.
+          if (cause instanceof HttpError) throw cause;
           throw new ValidationError("invalid body: malformed JSON", { cause });
         });
         req.locals.body = run("body", options.body, raw);
