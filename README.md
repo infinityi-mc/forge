@@ -75,29 +75,40 @@ A good library knows its boundaries. To keep Forge lean and focused, we explicit
 ### Installation
 
 ```bash
-bun add forge
+bun add @infinityi/forge
 ```
 
 ### Bootstrapping an App
 
 ```typescript
-import { forge } from 'forge/lifecycle';
+import { forge, asComponent } from '@infinityi/forge/lifecycle';
+import { serve, type HttpServer } from '@infinityi/forge/http';
 import { config } from './config';
 import { db } from './data';
-import { app } from './http';
+import { router } from './http';
 
-// 1. Define your components
-const components = [db, app];
+let server: HttpServer | undefined;
 
-// 2. Boot the application
-const server = await forge.boot({
+const app = await forge.boot({
   config,
-  components,
+  logger: console,
+  components: [
+    asComponent('db', {
+      start: () => db.ping(),
+      stop: () => db.shutdown(),
+    }),
+    asComponent('http', {
+      start: () => {
+        server = serve(router, { port: config.http.port });
+      },
+      stop: () => server?.stop(true),
+    }),
+  ],
   shutdownTimeout: 30_000, // Graceful shutdown window
 });
 
-server.logger.info('Forge application started', { 
-  port: config.http.port 
+app.logger.info('Forge application started', {
+  port: config.http.port,
 });
 ```
 
@@ -107,16 +118,20 @@ Forge ships with in-memory doubles for all core interfaces, making unit testing 
 
 ```typescript
 import { describe, it, expect } from 'bun:test';
-import { InMemoryMessageBus } from 'forge/messaging/testing';
+import { InMemoryMessageBus } from '@infinityi/forge/messaging/testing';
 
 describe('Order Service', () => {
   it('publishes an event when an order is placed', async () => {
     const bus = new InMemoryMessageBus();
-    // ... inject bus into service and execute business logic ...
-    
+
+    await bus.publish({
+      type: 'OrderPlaced',
+      payload: { orderId: '123' },
+    });
+
     expect(bus.publishedEvents).toContainEqual({
       type: 'OrderPlaced',
-      payload: { orderId: '123' }
+      payload: { orderId: '123' },
     });
   });
 });
