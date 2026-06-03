@@ -44,7 +44,7 @@ import {
   ConfigSecretAccessError,
   ConfigSourceError,
   ConfigValidationError,
-} from "forge/config";
+} from "@infinityi/forge/config";
 ```
 
 ### `defineConfig(schema, options?): Infer<S>`
@@ -52,7 +52,7 @@ import {
 Load, validate, and deep-freeze configuration from environment/CLI/dotenv at boot.
 
 ```ts
-import { defineConfig, t } from "forge/config";
+import { defineConfig, t } from "@infinityi/forge/config";
 
 export const config = defineConfig({
   app: {
@@ -107,7 +107,7 @@ export const config = defineConfig({
 Leak-resistant wrapper for credentials.
 
 ```ts
-import { Secret, isSecret } from "forge/config";
+import { Secret, isSecret } from "@infinityi/forge/config";
 
 const s = new Secret("my-key");
 s.unwrap();        // "my-key"
@@ -127,7 +127,7 @@ isSecret(s);       // true
 Runtime-mutable configuration backed by a polling provider.
 
 ```ts
-import { defineDynamicConfig, t, pollingProvider } from "forge/config";
+import { defineDynamicConfig, t, pollingProvider } from "@infinityi/forge/config";
 
 const handle = await defineDynamicConfig(
   { featureFlags: { darkMode: t.boolean.default(false) } },
@@ -160,7 +160,7 @@ await handle.shutdown();
 Return dotted paths that differ between two config snapshots.
 
 ```ts
-import { diff } from "forge/config";
+import { diff } from "@infinityi/forge/config";
 
 diff({ a: { x: 1 } }, { a: { x: 2 } }); // ["a.x"]
 ```
@@ -184,7 +184,7 @@ diff({ a: { x: 1 } }, { a: { x: 2 } }); // ["a.x"]
 ### Diagnostics
 
 ```ts
-import { formatDiagnostics, writeFailFast } from "forge/config";
+import { formatDiagnostics, writeFailFast } from "@infinityi/forge/config";
 
 const formatted = formatDiagnostics(issues, { color: true, width: 80 });
 writeFailFast(issues, { stderr: process.stderr, exit: process.exit });
@@ -209,7 +209,7 @@ import {
   QueryError,
   TenantError,
   TransactionError,
-} from "forge/data";
+} from "@infinityi/forge/data";
 ```
 
 ### `createDb(options): Db<Schema>`
@@ -217,8 +217,8 @@ import {
 Create a typed database handle.
 
 ```ts
-import { createDb } from "forge/data";
-import { postgresDialect } from "forge/data/dialects/postgres";
+import { createDb } from "@infinityi/forge/data";
+import { postgresDialect } from "@infinityi/forge/data/dialects/postgres";
 
 interface MySchema {
   users: { id: string; name: string; tenant_id: string };
@@ -298,7 +298,7 @@ await db
 ### Raw SQL
 
 ```ts
-import { sql, raw } from "forge/data";
+import { sql, raw } from "@infinityi/forge/data";
 
 const fragment = sql`SELECT * FROM users WHERE id = ${userId}`;
 const result = await db.raw<{ id: string; name: string }>(fragment).execute();
@@ -349,7 +349,7 @@ const rows = await tenantDb.selectFrom("users").select(["id", "name"]).execute()
 Assert `numAffectedRows` matches (defaults to 1). Throws `ConcurrencyError` otherwise.
 
 ```ts
-import { expectUpdated } from "forge/data";
+import { expectUpdated } from "@infinityi/forge/data";
 
 const result = await db.updateTable("users").set({ name: "X" }).where("id", "=", "u1").execute();
 expectUpdated(result); // throws if 0 rows updated
@@ -360,7 +360,7 @@ expectUpdated(result); // throws if 0 rows updated
 Generic async resource pool.
 
 ```ts
-import { createPool } from "forge/data";
+import { createPool } from "@infinityi/forge/data";
 
 const pool = createPool({
   name: "pg",
@@ -441,7 +441,7 @@ import {
   RouteConflictError,
   ValidationError,
   OpenApiError,
-} from "forge/http";
+} from "@infinityi/forge/http";
 ```
 
 ### Client — `createHttpClient(options): HttpClient`
@@ -449,8 +449,8 @@ import {
 Resilient, traced HTTP client.
 
 ```ts
-import { createHttpClient } from "forge/http";
-import { combine, retry, timeout, exponentialBackoff } from "forge/resilience";
+import { createHttpClient } from "@infinityi/forge/http";
+import { combine, retry, timeout, exponentialBackoff } from "@infinityi/forge/resilience";
 
 const api = createHttpClient({
   baseUrl: "https://payments.internal",
@@ -476,7 +476,7 @@ await api.delete("/orders/1");
 |--------|------|-------------|
 | `baseUrl` | `string` | Base URL for all requests |
 | `timeoutMs` | `number` | Default request timeout |
-| `resilience` | `Pipeline` | `forge/resilience` pipeline |
+| `resilience` | `Pipeline` | `@infinityi/forge/resilience` pipeline |
 | `headers` | `Record<string, string>` | Default headers |
 | `codec` | `Codec` | Request/response codec (default JSON) |
 | `telemetry` | `object` | Tracer for distributed tracing |
@@ -487,7 +487,7 @@ await api.delete("/orders/1");
 Segment-trie router with typed routes.
 
 ```ts
-import { createRouter, serve } from "forge/http";
+import { createRouter, serve } from "@infinityi/forge/http";
 
 const router = createRouter()
   .use(requestId())
@@ -512,7 +512,7 @@ const server = serve({ router, port: 3000 });
 #### Typed Routes with Schema Validation
 
 ```ts
-import { createRouter, validate } from "forge/http";
+import { createRouter, validate } from "@infinityi/forge/http";
 
 const router = createRouter()
   .route({
@@ -594,7 +594,7 @@ router.use(bodyLimit({ maxBytes: 1_048_576 })); // 1 MB
 
 ```ts
 router.use(rateLimit({
-  limiter: myLimiter, // from forge/resilience
+  limiter: myLimiter, // from @infinityi/forge/resilience
   keyExtractor: (req) => req.headers.get("x-api-key") ?? req.ip,
 }));
 ```
@@ -602,7 +602,7 @@ router.use(rateLimit({
 ### OpenAPI 3.1 Generation
 
 ```ts
-import { buildOpenApi, serveOpenApi, problemSchema } from "forge/http";
+import { buildOpenApi, serveOpenApi, problemSchema } from "@infinityi/forge/http";
 
 const doc = buildOpenApi(router, {
   info: { title: "My API", version: "1.0.0" },
@@ -622,7 +622,7 @@ const errSchema = problemSchema(); // RFC 7807 JSON Schema
 ### Problem Details (RFC 7807)
 
 ```ts
-import { problem, ProblemError, renderProblem, PROBLEM_CONTENT_TYPE } from "forge/http";
+import { problem, ProblemError, renderProblem, PROBLEM_CONTENT_TYPE } from "@infinityi/forge/http";
 
 // Throw a problem from a handler
 throw problem(404, {
@@ -666,7 +666,7 @@ import {
   ShutdownError,
   ShutdownTimeoutError,
   StartupError,
-} from "forge/lifecycle";
+} from "@infinityi/forge/lifecycle";
 ```
 
 ### `forge.boot(options)` / `boot(options): Promise<Application>`
@@ -674,7 +674,7 @@ import {
 Start components in order, fail-fast with rollback, graceful shutdown.
 
 ```ts
-import { forge, asComponent } from "forge/lifecycle";
+import { forge, asComponent } from "@infinityi/forge/lifecycle";
 
 const app = await forge.boot({
   components: [
@@ -751,7 +751,7 @@ import {
   poolComponent,
   relayComponent,
   workerComponent,
-} from "forge/lifecycle";
+} from "@infinityi/forge/lifecycle";
 
 // Database adapter
 databaseComponent("db", db, { healthcheck: true });
@@ -778,7 +778,7 @@ workerComponent("jobs", worker);
 ### Health Probes
 
 ```ts
-import { createProbe, startHealthServer, healthRoutes } from "forge/lifecycle";
+import { createProbe, startHealthServer, healthRoutes } from "@infinityi/forge/lifecycle";
 
 const probe = createProbe({
   ready: () => app.ready,
@@ -807,7 +807,7 @@ router.get("/readyz", routes.readiness);
 ### Signal Handling
 
 ```ts
-import { installSignalHandlers } from "forge/lifecycle";
+import { installSignalHandlers } from "@infinityi/forge/lifecycle";
 
 installSignalHandlers({
   onShutdown: () => app.stop(),
@@ -833,7 +833,7 @@ import {
   OutboxRelayError,
   SerializationError,
   TransportError,
-} from "forge/messaging";
+} from "@infinityi/forge/messaging";
 ```
 
 ### `createMessageBus(options): MessageBus`
@@ -841,8 +841,8 @@ import {
 The publish side.
 
 ```ts
-import { createMessageBus } from "forge/messaging";
-import { inMemoryTransport } from "forge/messaging/transports/memory";
+import { createMessageBus } from "@infinityi/forge/messaging";
+import { inMemoryTransport } from "@infinityi/forge/messaging/transports/memory";
 
 const transport = inMemoryTransport();
 const bus = createMessageBus({
@@ -881,10 +881,10 @@ await bus.publishBatch([
 The consume side with dedup, retry, and dead-lettering.
 
 ```ts
-import { createConsumer } from "forge/messaging";
-import { retry, exponentialBackoff } from "forge/resilience";
-import { inMemoryInboxStore } from "forge/messaging/inbox";
-import { inMemoryDeadLetterStore } from "forge/messaging/deadletter";
+import { createConsumer } from "@infinityi/forge/messaging";
+import { retry, exponentialBackoff } from "@infinityi/forge/resilience";
+import { inMemoryInboxStore } from "@infinityi/forge/messaging/inbox";
+import { inMemoryDeadLetterStore } from "@infinityi/forge/messaging/deadletter";
 
 const consumer = createConsumer({
   transport,
@@ -927,15 +927,15 @@ await consumer.stop();
 
 ```ts
 // In-memory (tests / single-process)
-import { inMemoryTransport } from "forge/messaging/transports/memory";
+import { inMemoryTransport } from "@infinityi/forge/messaging/transports/memory";
 const transport = inMemoryTransport({ maxDeliveries: 16 });
 
 // SQLite (durable, single-node)
-import { sqliteTransport } from "forge/messaging/transports/sqlite";
+import { sqliteTransport } from "@infinityi/forge/messaging/transports/sqlite";
 const transport = sqliteTransport({ path: "./messages.db" });
 
 // PostgreSQL (multi-node)
-import { postgresTransport } from "forge/messaging/transports/postgres";
+import { postgresTransport } from "@infinityi/forge/messaging/transports/postgres";
 const transport = postgresTransport({ connectionString: "..." });
 ```
 
@@ -950,8 +950,8 @@ const transport = postgresTransport({ connectionString: "..." });
 ### Inbox (Deduplication)
 
 ```ts
-import { inMemoryInboxStore } from "forge/messaging/inbox";
-import { sqliteInboxStore } from "forge/messaging/inbox";
+import { inMemoryInboxStore } from "@infinityi/forge/messaging/inbox";
+import { sqliteInboxStore } from "@infinityi/forge/messaging/inbox";
 
 // In-memory (tests)
 const inbox = inMemoryInboxStore();
@@ -971,8 +971,8 @@ const inbox = sqliteInboxStore({ path: "./inbox.db" });
 ### Dead-Letter Store
 
 ```ts
-import { inMemoryDeadLetterStore } from "forge/messaging/deadletter";
-import { sqliteDeadLetterStore } from "forge/messaging/deadletter";
+import { inMemoryDeadLetterStore } from "@infinityi/forge/messaging/deadletter";
+import { sqliteDeadLetterStore } from "@infinityi/forge/messaging/deadletter";
 
 const dlq = inMemoryDeadLetterStore();
 
@@ -998,7 +998,7 @@ await dlq.remove("msg-id");
 ### Outbox Relay
 
 ```ts
-import { createOutboxRelay } from "forge/messaging/outbox";
+import { createOutboxRelay } from "@infinityi/forge/messaging/outbox";
 
 const relay = createOutboxRelay({
   db,
@@ -1032,7 +1032,7 @@ await relay.stop();
 ### Background Jobs
 
 ```ts
-import { createJobQueue, createWorker, inMemoryJobStore, sqliteJobStore } from "forge/messaging/jobs";
+import { createJobQueue, createWorker, inMemoryJobStore, sqliteJobStore } from "@infinityi/forge/messaging/jobs";
 
 // Queue side
 const store = sqliteJobStore({ path: "./jobs.db" });
@@ -1118,7 +1118,7 @@ import {
   RateLimitedError,
   BulkheadFullError,
   HedgeCancelledError,
-} from "forge/resilience";
+} from "@infinityi/forge/resilience";
 ```
 
 ### `combine(...policies): Pipeline`
@@ -1126,7 +1126,7 @@ import {
 Compose policies into a pipeline (outermost-first execution order).
 
 ```ts
-import { combine, retry, timeout, circuitBreaker, exponentialBackoff } from "forge/resilience";
+import { combine, retry, timeout, circuitBreaker, exponentialBackoff } from "@infinityi/forge/resilience";
 
 const pipeline = combine(
   retry({ maxAttempts: 3, backoff: exponentialBackoff({ initial: 100, max: 5_000 }) }),
@@ -1285,7 +1285,7 @@ const policy = hedge({
 ### Result API (no-throw)
 
 ```ts
-import { ok, err, isOk, isErr } from "forge/resilience";
+import { ok, err, isOk, isErr } from "@infinityi/forge/resilience";
 
 const result = await pipeline.executeResult(async (ctx) => {
   return fetchData(ctx.signal);
@@ -1357,7 +1357,7 @@ import {
   TokenClaimError,
   TokenExpiredError,
   TokenInvalidError,
-} from "forge/security";
+} from "@infinityi/forge/security";
 ```
 
 ### `createJwtVerifier(options): TokenVerifier`
@@ -1365,8 +1365,8 @@ import {
 Verify JWT tokens and extract a `Principal`.
 
 ```ts
-import { createJwtVerifier } from "forge/security";
-import { hmacKeyStore } from "forge/security";
+import { createJwtVerifier } from "@infinityi/forge/security";
+import { hmacKeyStore } from "@infinityi/forge/security";
 
 const verifier = createJwtVerifier({
   keyStore: hmacKeyStore({ secret: process.env.JWT_SECRET! }),
@@ -1403,7 +1403,7 @@ const principal = await verifier.verify(token);
 Verify API keys against a lookup function.
 
 ```ts
-import { createApiKeyVerifier, generateApiKey, apiKeyFingerprint } from "forge/security";
+import { createApiKeyVerifier, generateApiKey, apiKeyFingerprint } from "@infinityi/forge/security";
 
 // Generate a key
 const key = generateApiKey(); // "forge_..."
@@ -1429,7 +1429,7 @@ const principal = await verifier.verify(key);
 ### Key Stores (JWKS)
 
 ```ts
-import { createJwksKeyStore, hmacKeyStore, staticKeyStore } from "forge/security";
+import { createJwksKeyStore, hmacKeyStore, staticKeyStore } from "@infinityi/forge/security";
 
 // HMAC (symmetric)
 const ks = hmacKeyStore({ secret: "my-secret" });
@@ -1441,14 +1441,14 @@ const ks = staticKeyStore({ keys: [jwk1, jwk2] });
 const ks = createJwksKeyStore({
   url: "https://auth.example.com/.well-known/jwks.json",
   cache: { ttlMs: 600_000, staleWhileRevalidate: true },
-  resilience: pipeline, // forge/resilience pipeline
+  resilience: pipeline, // @infinityi/forge/resilience pipeline
 });
 ```
 
 ### Authorization Policies
 
 ```ts
-import { authorize, requireRole, requireScope, requireTenant, allOf, anyOf, not } from "forge/security";
+import { authorize, requireRole, requireScope, requireTenant, allOf, anyOf, not } from "@infinityi/forge/security";
 
 // Single policy
 const decision = await authorize(requireRole("admin"), {
@@ -1489,7 +1489,7 @@ const notGuest = not(requireRole("guest"));
 ### HTTP Security Middleware
 
 ```ts
-import { authenticate, authorizeRoute } from "forge/security";
+import { authenticate, authorizeRoute } from "@infinityi/forge/security";
 
 router
   .use(authenticate({ verifier, audit: auditLogger }))
@@ -1503,7 +1503,7 @@ router
 ### Audit Logging
 
 ```ts
-import { createAuditLogger, logSink, memorySink, verifyAuditChain } from "forge/security";
+import { createAuditLogger, logSink, memorySink, verifyAuditChain } from "@infinityi/forge/security";
 
 const audit = createAuditLogger({
   sink: logSink({ logger }),
@@ -1541,7 +1541,7 @@ const result = await verifyAuditChain(events, { signingSecret: "hmac-key" });
 ### Security Health Component
 
 ```ts
-import { securityHealthComponent } from "forge/security";
+import { securityHealthComponent } from "@infinityi/forge/security";
 
 const healthComp = securityHealthComponent({
   keyStore: jwksKeyStore,
@@ -1555,8 +1555,8 @@ const healthComp = securityHealthComponent({
 ## 8. Telemetry
 
 ```ts
-import { initTelemetry, TelemetryError } from "forge/telemetry";
-import type { Resource, Telemetry } from "forge/telemetry";
+import { initTelemetry, TelemetryError } from "@infinityi/forge/telemetry";
+import type { Resource, Telemetry } from "@infinityi/forge/telemetry";
 ```
 
 ### `initTelemetry(options): Telemetry`
@@ -1564,10 +1564,10 @@ import type { Resource, Telemetry } from "forge/telemetry";
 Unified factory wiring log + meter + trace around a single resource.
 
 ```ts
-import { initTelemetry } from "forge/telemetry";
-import { stdoutLogExporter } from "forge/telemetry/log/exporters/stdout";
-import { stdoutMeterExporter } from "forge/telemetry/meter/exporters/stdout";
-import { stdoutSpanExporter } from "forge/telemetry/trace/exporters/stdout";
+import { initTelemetry } from "@infinityi/forge/telemetry";
+import { stdoutLogExporter } from "@infinityi/forge/telemetry/log/exporters/stdout";
+import { stdoutMeterExporter } from "@infinityi/forge/telemetry/meter/exporters/stdout";
+import { stdoutSpanExporter } from "@infinityi/forge/telemetry/trace/exporters/stdout";
 
 const telemetry = initTelemetry({
   resource: { serviceName: "order-api", serviceVersion: "1.0.0" },
@@ -1602,11 +1602,11 @@ await telemetry.shutdown();
 | `flush(opts?)` | `Promise<TelemetryFlushResult>` | Drain all signals |
 | `shutdown()` | `Promise<TelemetryFlushResult>` | Stop all signals |
 
-### Logging — `forge/telemetry/log`
+### Logging — `@infinityi/forge/telemetry/log`
 
 ```ts
-import { createLog } from "forge/telemetry/log";
-import { stdoutExporter } from "forge/telemetry/log/exporters/stdout";
+import { createLog } from "@infinityi/forge/telemetry/log";
+import { stdoutExporter } from "@infinityi/forge/telemetry/log/exporters/stdout";
 
 const log = createLog({
   exporter: stdoutExporter(),
@@ -1639,7 +1639,7 @@ await log.shutdown();
 #### Log Middleware
 
 ```ts
-import { redact } from "forge/telemetry/log/middleware";
+import { redact } from "@infinityi/forge/telemetry/log/middleware";
 
 const log = createLog({
   exporter: stdoutExporter(),
@@ -1651,15 +1651,15 @@ const log = createLog({
 
 | Exporter | Import | Description |
 |----------|--------|-------------|
-| stdout | `forge/telemetry/log/exporters/stdout` | JSON to stdout |
-| recording | `forge/telemetry/log/exporters/recording` | In-memory (tests) |
-| null | `forge/telemetry/log/exporters/null` | Discard |
+| stdout | `@infinityi/forge/telemetry/log/exporters/stdout` | JSON to stdout |
+| recording | `@infinityi/forge/telemetry/log/exporters/recording` | In-memory (tests) |
+| null | `@infinityi/forge/telemetry/log/exporters/null` | Discard |
 
-### Metrics — `forge/telemetry/meter`
+### Metrics — `@infinityi/forge/telemetry/meter`
 
 ```ts
-import { createMeter } from "forge/telemetry/meter";
-import { stdoutMeterExporter } from "forge/telemetry/meter/exporters/stdout";
+import { createMeter } from "@infinityi/forge/telemetry/meter";
+import { stdoutMeterExporter } from "@infinityi/forge/telemetry/meter/exporters/stdout";
 
 const meter = createMeter({
   resource: { serviceName: "api" },
@@ -1714,15 +1714,15 @@ await meter.shutdown();
 
 | Exporter | Import | Description |
 |----------|--------|-------------|
-| stdout | `forge/telemetry/meter/exporters/stdout` | JSON to stdout |
-| recording | `forge/telemetry/meter/exporters/recording` | In-memory (tests) |
-| null | `forge/telemetry/meter/exporters/null` | Discard |
+| stdout | `@infinityi/forge/telemetry/meter/exporters/stdout` | JSON to stdout |
+| recording | `@infinityi/forge/telemetry/meter/exporters/recording` | In-memory (tests) |
+| null | `@infinityi/forge/telemetry/meter/exporters/null` | Discard |
 
-### Tracing — `forge/telemetry/trace`
+### Tracing — `@infinityi/forge/telemetry/trace`
 
 ```ts
-import { createTracer, simpleSpanProcessor, batchSpanProcessor } from "forge/telemetry/trace";
-import { stdoutSpanExporter } from "forge/telemetry/trace/exporters/stdout";
+import { createTracer, simpleSpanProcessor, batchSpanProcessor } from "@infinityi/forge/telemetry/trace";
+import { stdoutSpanExporter } from "@infinityi/forge/telemetry/trace/exporters/stdout";
 
 const tracer = createTracer({
   resource: { serviceName: "api" },
@@ -1775,7 +1775,7 @@ import {
   alwaysOffSampler,
   ratioSampler,
   parentBasedSampler,
-} from "forge/telemetry/trace";
+} from "@infinityi/forge/telemetry/trace";
 
 // Always sample
 const sampler = alwaysOnSampler();
@@ -1814,11 +1814,11 @@ const processor = batchSpanProcessor({
 
 | Exporter | Import | Description |
 |----------|--------|-------------|
-| stdout | `forge/telemetry/trace/exporters/stdout` | JSON to stdout |
-| recording | `forge/telemetry/trace/exporters/recording` | In-memory (tests) |
-| null | `forge/telemetry/trace/exporters/null` | Discard |
+| stdout | `@infinityi/forge/telemetry/trace/exporters/stdout` | JSON to stdout |
+| recording | `@infinityi/forge/telemetry/trace/exporters/recording` | In-memory (tests) |
+| null | `@infinityi/forge/telemetry/trace/exporters/null` | Discard |
 
-### Context Propagation — `forge/telemetry/context`
+### Context Propagation — `@infinityi/forge/telemetry/context`
 
 ```ts
 import {
@@ -1835,7 +1835,7 @@ import {
   formatBaggage,
   genTraceId,
   genSpanId,
-} from "forge/telemetry/context";
+} from "@infinityi/forge/telemetry/context";
 
 // Start a root context (entry point of a request)
 await withRootContext({ baggage: { tenantId: "t1" } }, async () => {
@@ -1861,9 +1861,9 @@ inject(objectCarrier(headers));
 #### OTLP/HTTP
 
 ```ts
-import { otlpHttpLogExporter } from "forge/telemetry/exporters/otlp-http";
-import { otlpHttpMeterExporter } from "forge/telemetry/exporters/otlp-http";
-import { otlpHttpSpanExporter } from "forge/telemetry/exporters/otlp-http";
+import { otlpHttpLogExporter } from "@infinityi/forge/telemetry/exporters/otlp-http";
+import { otlpHttpMeterExporter } from "@infinityi/forge/telemetry/exporters/otlp-http";
+import { otlpHttpSpanExporter } from "@infinityi/forge/telemetry/exporters/otlp-http";
 
 const logExporter = otlpHttpLogExporter({ endpoint: "http://collector:4318/v1/logs" });
 const meterExporter = otlpHttpMeterExporter({ endpoint: "http://collector:4318/v1/metrics" });
@@ -1873,7 +1873,7 @@ const spanExporter = otlpHttpSpanExporter({ endpoint: "http://collector:4318/v1/
 #### Prometheus
 
 ```ts
-import { prometheusExporter } from "forge/telemetry/exporters/prometheus";
+import { prometheusExporter } from "@infinityi/forge/telemetry/exporters/prometheus";
 
 const exporter = prometheusExporter(); // exposes text-format metrics
 ```
@@ -1899,33 +1899,33 @@ Every module defines a structured error hierarchy rooted at a module-level base 
 
 ## Import Map
 
-All modules are importable via their `forge/<module>` subpath:
+All modules are importable via their `@infinityi/forge/<module>` subpath:
 
 ```ts
-import { ... } from "forge/config";
-import { ... } from "forge/data";
-import { ... } from "forge/http";
-import { ... } from "forge/lifecycle";
-import { ... } from "forge/messaging";
-import { ... } from "forge/resilience";
-import { ... } from "forge/security";
-import { ... } from "forge/telemetry";
+import { ... } from "@infinityi/forge/config";
+import { ... } from "@infinityi/forge/data";
+import { ... } from "@infinityi/forge/http";
+import { ... } from "@infinityi/forge/lifecycle";
+import { ... } from "@infinityi/forge/messaging";
+import { ... } from "@infinityi/forge/resilience";
+import { ... } from "@infinityi/forge/security";
+import { ... } from "@infinityi/forge/telemetry";
 
 // Sub-module paths
-import { ... } from "forge/telemetry/log";
-import { ... } from "forge/telemetry/meter";
-import { ... } from "forge/telemetry/trace";
-import { ... } from "forge/telemetry/context";
-import { ... } from "forge/telemetry/log/exporters/stdout";
-import { ... } from "forge/telemetry/meter/exporters/stdout";
-import { ... } from "forge/telemetry/trace/exporters/stdout";
-import { ... } from "forge/telemetry/exporters/otlp-http";
-import { ... } from "forge/telemetry/exporters/prometheus";
-import { ... } from "forge/messaging/transports/memory";
-import { ... } from "forge/messaging/transports/sqlite";
-import { ... } from "forge/messaging/transports/postgres";
-import { ... } from "forge/messaging/inbox";
-import { ... } from "forge/messaging/deadletter";
-import { ... } from "forge/messaging/outbox";
-import { ... } from "forge/messaging/jobs";
+import { ... } from "@infinityi/forge/telemetry/log";
+import { ... } from "@infinityi/forge/telemetry/meter";
+import { ... } from "@infinityi/forge/telemetry/trace";
+import { ... } from "@infinityi/forge/telemetry/context";
+import { ... } from "@infinityi/forge/telemetry/log/exporters/stdout";
+import { ... } from "@infinityi/forge/telemetry/meter/exporters/stdout";
+import { ... } from "@infinityi/forge/telemetry/trace/exporters/stdout";
+import { ... } from "@infinityi/forge/telemetry/exporters/otlp-http";
+import { ... } from "@infinityi/forge/telemetry/exporters/prometheus";
+import { ... } from "@infinityi/forge/messaging/transports/memory";
+import { ... } from "@infinityi/forge/messaging/transports/sqlite";
+import { ... } from "@infinityi/forge/messaging/transports/postgres";
+import { ... } from "@infinityi/forge/messaging/inbox";
+import { ... } from "@infinityi/forge/messaging/deadletter";
+import { ... } from "@infinityi/forge/messaging/outbox";
+import { ... } from "@infinityi/forge/messaging/jobs";
 ```
