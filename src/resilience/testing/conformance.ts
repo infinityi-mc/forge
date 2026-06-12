@@ -39,6 +39,10 @@ import { TimeoutError, timeout } from "../timeout";
 import type { ExecutionContext, Pipeline, Policy } from "../types";
 import { TestClock } from "./clock";
 
+function observedNumber(value: number): number {
+  return value;
+}
+
 /**
  * Factory that returns a fresh pipeline for each scenario. Scenarios
  * never share state across runs — pass a function, not an instance.
@@ -359,7 +363,7 @@ export const BULKHEAD_RESILIENCE_SCENARIOS: readonly ResilienceConformanceScenar
         if (values.join(",") !== "first,second") {
           throw new Error(`unexpected bulkhead results: ${values.join(",")}`);
         }
-        if (bh.active !== 0) {
+        if (observedNumber(bh.active) !== 0) {
           throw new Error(`expected active=0 after release, got ${bh.active}`);
         }
       },
@@ -429,7 +433,7 @@ export const BULKHEAD_RESILIENCE_SCENARIOS: readonly ResilienceConformanceScenar
         if (aborted !== reason) {
           throw new Error("expected queued caller to reject with abort reason");
         }
-        if (bh.queued !== 0) {
+        if (observedNumber(bh.queued) !== 0) {
           throw new Error(`expected queued=0 after abort, got ${bh.queued}`);
         }
 
@@ -516,7 +520,7 @@ export const RATE_LIMIT_RESILIENCE_SCENARIOS: readonly ResilienceConformanceScen
             `expected RateLimitedError, got ${denied?.constructor?.name ?? typeof denied}`,
           );
         }
-        if (denied.retryAfterMs <= 0) {
+        if (denied.retryAfterMs === undefined || denied.retryAfterMs <= 0) {
           throw new Error(
             `expected retryAfterMs > 0, got ${denied.retryAfterMs}`,
           );
@@ -545,7 +549,7 @@ export const RATE_LIMIT_RESILIENCE_SCENARIOS: readonly ResilienceConformanceScen
         if (value !== "second") {
           throw new Error(`expected queued value "second", got ${value}`);
         }
-        if (limiter.pending !== 0) {
+        if (observedNumber(limiter.pending) !== 0) {
           throw new Error(`expected pending=0, got ${limiter.pending}`);
         }
       },
@@ -803,7 +807,7 @@ export const CLOCK_DETERMINISM_SCENARIOS: readonly ResilienceConformanceScenario
           throw new Error("hedged attempt started before delay elapsed");
         }
         await clock.tickAsync(1);
-        if (calls !== 2) {
+        if (observedNumber(calls) !== 2) {
           throw new Error(`expected second hedge attempt, got ${calls}`);
         }
         releaseWinner("won");
