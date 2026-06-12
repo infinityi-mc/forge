@@ -32,6 +32,8 @@ import type {
   CircuitBreakerOptions,
   CircuitBreakerPolicy,
   CircuitState,
+  CircuitStateChangeEvent,
+  CircuitStateChangeReason,
 } from "./types";
 
 const STATE_CODE: Record<CircuitState, number> = {
@@ -78,6 +80,40 @@ export function circuitBreaker(
   const minimumRequests =
     options.minimumRequests ??
     (isRatio ? Math.ceil(1 / failureThreshold) : failureThreshold);
+  const slowCallDurationMs = options.slowCallDurationMs;
+  const slowCallThreshold = options.slowCallThreshold;
+  const partiallyConfiguredSlowCalls =
+    (slowCallDurationMs === undefined) !== (slowCallThreshold === undefined);
+  if (partiallyConfiguredSlowCalls) {
+    throw new RangeError(
+      "circuitBreaker: slowCallDurationMs and slowCallThreshold must be configured together",
+    );
+  }
+  if (
+    slowCallDurationMs !== undefined &&
+    (!Number.isFinite(slowCallDurationMs) || slowCallDurationMs <= 0)
+  ) {
+    throw new RangeError(
+      `circuitBreaker: slowCallDurationMs must be a positive finite number, got ${slowCallDurationMs}`,
+    );
+  }
+  if (
+    slowCallThreshold !== undefined &&
+    (!Number.isFinite(slowCallThreshold) || slowCallThreshold <= 0)
+  ) {
+    throw new RangeError(
+      `circuitBreaker: slowCallThreshold must be > 0, got ${slowCallThreshold}`,
+    );
+  }
+  const slowCallEnabled =
+    slowCallDurationMs !== undefined && slowCallThreshold !== undefined;
+  const slowCallIsRatio =
+    slowCallThreshold !== undefined && slowCallThreshold > 0 && slowCallThreshold < 1;
+  const slowCallMinimumRequests =
+    slowCallThreshold === undefined
+      ? 0
+      : options.minimumRequests ??
+        (slowCallIsRatio ? Math.ceil(1 / slowCallThreshold) : slowCallThreshold);
   const resetTimeoutMs = options.resetTimeoutMs;
   const halfOpenMaxAttempts = options.halfOpenMaxAttempts ?? 1;
   if (!Number.isInteger(halfOpenMaxAttempts) || halfOpenMaxAttempts < 1) {
@@ -106,7 +142,11 @@ export function circuitBreaker(
     });
   }
 
-  function transition(next: CircuitState, now: number): void {
+  function transition(
+    next: CircuitState,
+    now: number,
+    reason: CircuitStateChangeReason,
+  ): void {
     if (state === next) return;
     const from = state;
     state = next;
@@ -118,11 +158,26 @@ export function circuitBreaker(
     if (next !== "half-open") {
       halfOpenInFlight = 0;
     }
+    const event: CircuitStateChangeEvent = {
+      from,
+      to: next,
+      at: now,
+      reason,
+      ...(next === "open"
+        ? { openedAt: now, retryAt: now + resetTimeoutMs }
+        : {}),
+    };
     instruments.addEvent("resilience.circuit.state_change", {
       from_state: from,
       to_state: next,
+      reason,
     });
     reportState();
+    try {
+      options.onStateChange?.(event);
+    } catch {
+      // Observer callbacks must never alter breaker admission behavior.
+    }
   }
 
   function recordOutcome(outcome: Outcome, now: number): void {
@@ -137,6 +192,17 @@ export function circuitBreaker(
       return failures / samples >= failureThreshold;
     }
     return failures >= failureThreshold;
+  }
+
+  function maybeTripSlow(now: number): boolean {
+    if (!slowCallEnabled || slowCallThreshold === undefined) return false;
+    const samples = window.samples(now);
+    const slow = window.slow(now);
+    if (slowCallIsRatio) {
+      if (samples < slowCallMinimumRequests) return false;
+      return slow / samples >= slowCallThreshold;
+    }
+    return slow >= slowCallThreshold;
   }
 
   // Seed the gauge so observers can see the initial state without
@@ -155,7 +221,7 @@ export function circuitBreaker(
       // Lazy half-open transition: the first call after the cool-down
       // is converted into a probe.
       if (retryAt !== undefined && now >= retryAt) {
-        transition("half-open", now);
+        transition("half-open", now, "reset-timeout");
       } else {
         throw new CircuitOpenError(`circuit-breaker: breaker is open`, {
           state,
@@ -178,14 +244,25 @@ export function circuitBreaker(
     instruments.attempts()?.add(1, { policy: "circuit-breaker", state });
 
     try {
+      const startedAt = clock.now();
       const value = await op(ctx);
       const after = clock.now();
       if (state === "half-open") {
         halfOpenInFlight = Math.max(0, halfOpenInFlight - 1);
         window.clear();
-        transition("closed", after);
+        transition("closed", after, "probe-success");
       } else {
-        recordOutcome("success", after);
+        const durationMs = Math.max(0, after - startedAt);
+        const outcome: Outcome =
+          slowCallEnabled &&
+            slowCallDurationMs !== undefined &&
+            durationMs >= slowCallDurationMs
+            ? "slow"
+            : "success";
+        recordOutcome(outcome, after);
+        if (outcome === "slow" && maybeTripSlow(after)) {
+          transition("open", after, "slow-call-threshold");
+        }
       }
       return value;
     } catch (error) {
@@ -195,16 +272,16 @@ export function circuitBreaker(
         halfOpenInFlight = Math.max(0, halfOpenInFlight - 1);
         if (isFailure) {
           window.clear();
-          transition("open", after);
+          transition("open", after, "probe-failure");
         } else {
           // Treat as success — the dependency answered, just not with
           // an answer that should trip the breaker.
           window.clear();
-          transition("closed", after);
+          transition("closed", after, "probe-success");
         }
       } else if (isFailure) {
         recordOutcome("failure", after);
-        if (maybeTrip(after)) transition("open", after);
+        if (maybeTrip(after)) transition("open", after, "failure-threshold");
       } else {
         recordOutcome("success", after);
       }
@@ -224,18 +301,18 @@ export function circuitBreaker(
       reportState();
       return;
     }
-    transition("open", now);
+    transition("open", now, "manual-open");
   }
 
   function forceClosed(): void {
     const now = clock.now();
     window.clear();
-    transition("closed", now);
+    transition("closed", now, "manual-close");
   }
 
   function reset(): void {
     window.clear();
-    transition("closed", clock.now());
+    transition("closed", clock.now(), "reset");
   }
 
   return {

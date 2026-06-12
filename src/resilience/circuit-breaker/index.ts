@@ -12,5 +12,7 @@ export type {
   CircuitBreakerOptions,
   CircuitBreakerPolicy,
   CircuitState,
+  CircuitStateChangeEvent,
+  CircuitStateChangeReason,
   CircuitWindow,
 } from "./types";
