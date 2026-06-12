@@ -19,7 +19,7 @@
  * | `AuthenticationError` (+ subclasses) | `401` | `forge/security` authn family |
  * | `AuthorizationError` | `403` | `forge/security` policy deny |
  * | `RateLimitError` / `RateLimitedError` | `429` | `Retry-After` from `retryAfterMs` |
- * | `CircuitOpenError` | `503` | dependency unavailable |
+ * | `CircuitOpenError` | `503` | `Retry-After` from `retryAt` when present |
  * | _anything else_ | `500` | no `detail`; logged, not leaked |
  *
  * @module
@@ -103,7 +103,15 @@ function renderError(error: unknown, logger?: Logger): Response {
     return res;
   }
   if (name === "CircuitOpenError") {
-    return renderProblem({ status: 503, detail: "Dependency unavailable" });
+    const res = renderProblem({ status: 503, detail: "Dependency unavailable" });
+    const retryAt = (error as { retryAt?: number }).retryAt;
+    if (typeof retryAt === "number" && Number.isFinite(retryAt)) {
+      const retryAfterMs = retryAt - Date.now();
+      if (retryAfterMs > 0) {
+        res.headers.set("retry-after", String(Math.ceil(retryAfterMs / 1000)));
+      }
+    }
+    return res;
   }
 
   // Unmapped: generic 500 with no detail. The real error is logged, never

@@ -290,6 +290,41 @@ describe("createHttpClient — resilience composition", () => {
     await client.get("/slow").catch((e) => e);
     expect(observed?.aborted).toBe(true);
   });
+
+  test("caller cancellation still aborts fetch when a resilience pipeline is present", async () => {
+    const caller = new AbortController();
+    let observed: AbortSignal | undefined;
+    let startFetch!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startFetch = resolve;
+    });
+    const pipelineSignal = new AbortController().signal;
+    const fetch: FetchLike = (_input, init) => {
+      observed = init?.signal ?? undefined;
+      startFetch();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+          once: true,
+        });
+      });
+    };
+    const client = createHttpClient({
+      baseUrl: "https://svc.test",
+      fetch,
+      resilience: {
+        execute: async (op) => op({ signal: pipelineSignal }),
+      },
+    });
+
+    const pending = client.get("/slow", { signal: caller.signal }).catch((e) => e);
+    await started;
+    caller.abort(new DOMException("caller cancelled", "AbortError"));
+    const error = await pending;
+
+    expect(observed?.aborted).toBe(true);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("AbortError");
+  });
 });
 
 describe("createHttpClient — telemetry", () => {
