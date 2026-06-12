@@ -1,13 +1,15 @@
 /**
  * Structural seams for the official `forge/lifecycle/adapters`.
  *
- * The adapters wrap `forge/data`, `forge/http`, and `forge/messaging` objects
- * into {@link Component}s, but — like the structural telemetry seam — they do so
- * **without** hard-importing those modules. Each adapter is typed against the
+ * The adapters wrap `forge/data`, `forge/http`, `forge/messaging`, and
+ * `forge/resilience` objects into {@link Component}s, but — like the structural
+ * telemetry seam — they do so **without** hard-importing those modules. Each
+ * adapter is typed against the
  * minimal `*Like` interface describing only the methods it touches; the real
- * `Db`, `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`, and
- * `MessageBus` already satisfy these structurally, so the adapters are drop-in
- * with zero changes to the other modules.
+ * `Db`, `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`,
+ * `MessageBus`, `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
+ * these structurally, so the adapters are drop-in with zero changes to the other
+ * modules.
  *
  * @module
  */
@@ -74,4 +76,33 @@ export interface MessageBusLike {
   flush(): Promise<void> | void;
   /** Release transport resources. */
   shutdown(): Promise<void> | void;
+}
+
+/** Circuit-breaker states observed by {@link circuitBreakerComponent}. */
+export type CircuitBreakerState = "closed" | "open" | "half-open";
+
+/** The slice of `forge/resilience`'s `CircuitBreakerPolicy` the adapter uses. */
+export interface CircuitBreakerLike {
+  /** Current breaker state. */
+  readonly state: CircuitBreakerState;
+}
+
+/** Options for {@link circuitBreakerComponent}. */
+export interface CircuitBreakerComponentOptions extends AdapterOptions {
+  /** Report an open breaker as `degraded` instead of `unhealthy`. Default `false`. */
+  readonly degraded?: boolean;
+}
+
+/** The slice of `forge/resilience`'s `BulkheadPolicy` the adapter uses. */
+export interface BulkheadLike {
+  /** Number of operations currently running. */
+  readonly active: number;
+  /** Number of callers currently waiting for a slot. */
+  readonly queued: number;
+}
+
+/** Options for {@link bulkheadComponent}. */
+export interface BulkheadComponentOptions extends AdapterOptions {
+  /** Report queued callers as `unhealthy` instead of `degraded`. Default `false`. */
+  readonly unhealthyAtSaturation?: boolean;
 }
