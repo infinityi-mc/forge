@@ -24,6 +24,29 @@ import type { ResilienceTelemetry } from "../telemetry/instrumentation";
  */
 export type CircuitState = "closed" | "open" | "half-open";
 
+/** Reason an actual circuit-breaker state transition occurred. */
+export type CircuitStateChangeReason =
+  | "failure-threshold"
+  | "slow-call-threshold"
+  | "reset-timeout"
+  | "probe-success"
+  | "probe-failure"
+  | "manual-open"
+  | "manual-close"
+  | "reset";
+
+/**
+ * Observational event emitted after the breaker changes state.
+ */
+export interface CircuitStateChangeEvent {
+  readonly from: CircuitState;
+  readonly to: CircuitState;
+  readonly at: number;
+  readonly reason: CircuitStateChangeReason;
+  readonly openedAt?: number;
+  readonly retryAt?: number;
+}
+
 /**
  * Sliding-window configuration. The breaker counts the last `size`
  * outcomes (count-window) or the outcomes within the last `durationMs`
@@ -77,6 +100,24 @@ export interface CircuitBreakerOptions {
    * the operation had resolved.
    */
   shouldTrip?: (error: unknown) => boolean;
+  /**
+   * Successful calls with duration `>= slowCallDurationMs` are recorded
+   * as slow samples. Must be configured together with
+   * `slowCallThreshold`; omitted by default.
+   */
+  slowCallDurationMs?: number;
+  /**
+   * Number of slow calls (`>= 1`) or slow-call ratio (`0 < value < 1`)
+   * required to transition from `closed` to `open`. Ratio thresholds
+   * honor `minimumRequests`.
+   */
+  slowCallThreshold?: number;
+  /**
+   * Observer called once per actual state transition. Exceptions thrown
+   * by the observer are ignored so observation cannot change breaker
+   * admission behavior.
+   */
+  onStateChange?: (event: CircuitStateChangeEvent) => void;
   /** Telemetry hook. Standalone breakers emit nothing when omitted. */
   telemetry?: ResilienceTelemetry;
   /** Override the clock source for tests. Defaults to `realClock`. */

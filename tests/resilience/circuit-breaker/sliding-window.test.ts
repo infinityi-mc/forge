@@ -14,6 +14,17 @@ describe("CountWindow", () => {
     expect(w.samples(0)).toBe(3);
   });
 
+  test("tracks slow calls separately from failures", () => {
+    const w = new CountWindow(3);
+    w.record("failure", 0);
+    w.record("slow", 0);
+    w.record("success", 0);
+
+    expect(w.failures(0)).toBe(1);
+    expect(w.slow(0)).toBe(1);
+    expect(w.samples(0)).toBe(3);
+  });
+
   test("wraps around at size", () => {
     const w = new CountWindow(3);
     w.record("failure", 0);
@@ -23,6 +34,10 @@ describe("CountWindow", () => {
     w.record("success", 0);
     expect(w.failures(0)).toBe(2);
     expect(w.samples(0)).toBe(3);
+    w.record("slow", 0);
+    expect(w.failures(0)).toBe(1);
+    expect(w.slow(0)).toBe(1);
+    expect(w.samples(0)).toBe(3);
   });
 
   test("clear empties the window", () => {
@@ -30,6 +45,7 @@ describe("CountWindow", () => {
     w.record("failure", 0);
     w.clear();
     expect(w.failures(0)).toBe(0);
+    expect(w.slow(0)).toBe(0);
     expect(w.samples(0)).toBe(0);
   });
 
@@ -54,12 +70,18 @@ describe("TimeWindow", () => {
   test("samples reflects current window contents", () => {
     const w = new TimeWindow(100);
     w.record("failure", 10);
-    w.record("success", 30);
+    w.record("slow", 30);
     w.record("failure", 60);
     expect(w.samples(60)).toBe(3);
     expect(w.failures(60)).toBe(2);
+    expect(w.slow(60)).toBe(1);
     // At t=120 (cutoff=20), the t=10 entry evicted.
     expect(w.samples(120)).toBe(2);
+    expect(w.failures(120)).toBe(1);
+    expect(w.slow(120)).toBe(1);
+    // At t=140 (cutoff=40), the slow t=30 entry evicted.
+    expect(w.slow(140)).toBe(0);
+    expect(w.samples(140)).toBe(1);
   });
 
   test("rejects invalid durations", () => {

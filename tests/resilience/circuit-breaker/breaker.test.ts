@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CircuitOpenError,
+  type CircuitStateChangeEvent,
   circuitBreaker,
   combine,
 } from "../../../src/resilience";
@@ -185,6 +186,72 @@ describe("circuitBreaker", () => {
     expect(await breaker.execute(() => 7, executionContext())).toBe(7);
   });
 
+  test("onStateChange observes each transition with stable reasons", async () => {
+    const clock = new TestClock();
+    const events: CircuitStateChangeEvent[] = [];
+    const breaker = circuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 50,
+      onStateChange: (event) => events.push(event),
+      clock,
+    });
+
+    await breaker
+      .execute(() => {
+        throw new Error("trip");
+      }, executionContext())
+      .catch(() => {});
+    await clock.tickAsync(50);
+    expect(await breaker.execute(() => "ok", executionContext())).toBe("ok");
+
+    expect(events.map((event) => [event.from, event.to, event.reason])).toEqual([
+      ["closed", "open", "failure-threshold"],
+      ["open", "half-open", "reset-timeout"],
+      ["half-open", "closed", "probe-success"],
+    ]);
+    expect(events[0]!.openedAt).toBe(0);
+    expect(events[0]!.retryAt).toBe(50);
+    expect(events[1]!.openedAt).toBeUndefined();
+    expect(events[2]!.retryAt).toBeUndefined();
+  });
+
+  test("onStateChange exceptions do not alter breaker outcomes", async () => {
+    const breaker = circuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 1_000,
+      onStateChange: () => {
+        throw new Error("observer failed");
+      },
+    });
+
+    const original = new Error("dependency failed");
+    const err = await breaker
+      .execute(() => {
+        throw original;
+      }, executionContext())
+      .catch((e) => e);
+
+    expect(err).toBe(original);
+    expect(breaker.state).toBe("open");
+  });
+
+  test("manual state changes emit manual-open and manual-close reasons", () => {
+    const events: CircuitStateChangeEvent[] = [];
+    const breaker = circuitBreaker({
+      failureThreshold: 5,
+      resetTimeoutMs: 1_000,
+      onStateChange: (event) => events.push(event),
+    });
+
+    breaker.forceOpen();
+    breaker.forceClosed();
+
+    expect(events.map((event) => event.reason)).toEqual([
+      "manual-open",
+      "manual-close",
+    ]);
+  });
+
   test("shouldTrip filters non-trip errors as successes", async () => {
     const breaker = circuitBreaker({
       failureThreshold: 2,
@@ -330,6 +397,156 @@ describe("circuitBreaker", () => {
     );
     expect(recovered).toBe("recovered");
     expect(breaker.state).toBe("closed");
+  });
+
+  test("slow calls do not trip when slow-call options are omitted", async () => {
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 10,
+      resetTimeoutMs: 1_000,
+      clock,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      expect(
+        await breaker.execute(async () => {
+          await clock.tickAsync(100);
+          return "slow-success";
+        }, executionContext()),
+      ).toBe("slow-success");
+    }
+
+    expect(breaker.state).toBe("closed");
+  });
+
+  test("slow-call count threshold opens the breaker after slow successes", async () => {
+    const clock = new TestClock();
+    const events: CircuitStateChangeEvent[] = [];
+    const breaker = circuitBreaker({
+      failureThreshold: 10,
+      resetTimeoutMs: 1_000,
+      slowCallDurationMs: 50,
+      slowCallThreshold: 2,
+      onStateChange: (event) => events.push(event),
+      clock,
+    });
+
+    expect(
+      await breaker.execute(async () => {
+        await clock.tickAsync(50);
+        return "first";
+      }, executionContext()),
+    ).toBe("first");
+    expect(breaker.state).toBe("closed");
+
+    expect(
+      await breaker.execute(async () => {
+        await clock.tickAsync(50);
+        return "second";
+      }, executionContext()),
+    ).toBe("second");
+    expect(breaker.state).toBe("open");
+    expect(events.at(-1)?.reason).toBe("slow-call-threshold");
+
+    const denied = await breaker
+      .execute(() => "denied", executionContext())
+      .catch((e) => e);
+    expect(denied).toBeInstanceOf(CircuitOpenError);
+  });
+
+  test("slow-call ratio threshold honors minimumRequests", async () => {
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 10,
+      resetTimeoutMs: 1_000,
+      window: { kind: "count", size: 10 },
+      minimumRequests: 4,
+      slowCallDurationMs: 100,
+      slowCallThreshold: 0.5,
+      clock,
+    });
+
+    // Two slow successes over two samples is 100%, but below
+    // minimumRequests=4.
+    for (let i = 0; i < 2; i++) {
+      expect(
+        await breaker.execute(async () => {
+          await clock.tickAsync(100);
+          return "slow";
+        }, executionContext()),
+      ).toBe("slow");
+      expect(breaker.state).toBe("closed");
+    }
+
+    expect(await breaker.execute(() => "fast", executionContext())).toBe("fast");
+    expect(breaker.state).toBe("closed");
+
+    expect(
+      await breaker.execute(async () => {
+        await clock.tickAsync(100);
+        return "slow";
+      }, executionContext()),
+    ).toBe("slow");
+    expect(breaker.state).toBe("open");
+  });
+
+  test("slow successful calls are not counted as failures", async () => {
+    const clock = new TestClock();
+    const breaker = circuitBreaker({
+      failureThreshold: 2,
+      resetTimeoutMs: 1_000,
+      slowCallDurationMs: 50,
+      slowCallThreshold: 10,
+      clock,
+    });
+
+    expect(
+      await breaker.execute(async () => {
+        await clock.tickAsync(50);
+        return "slow";
+      }, executionContext()),
+    ).toBe("slow");
+    expect(breaker.state).toBe("closed");
+
+    await breaker
+      .execute(() => {
+        throw new Error("one failure");
+      }, executionContext())
+      .catch(() => {});
+    expect(breaker.state).toBe("closed");
+  });
+
+  test("validates slow-call options together", () => {
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: 1_000,
+        slowCallDurationMs: 100,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: 1_000,
+        slowCallThreshold: 0.5,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: 1_000,
+        slowCallDurationMs: 0,
+        slowCallThreshold: 1,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      circuitBreaker({
+        failureThreshold: 1,
+        resetTimeoutMs: 1_000,
+        slowCallDurationMs: 100,
+        slowCallThreshold: 0,
+      }),
+    ).toThrow(RangeError);
   });
 
   test("validates resetTimeoutMs is positive", () => {

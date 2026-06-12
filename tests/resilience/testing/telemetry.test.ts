@@ -68,7 +68,11 @@ describe("createTestResilienceTelemetry", () => {
 
     expect(t.spanEvents).toContainEqual({
       name: "resilience.circuit.state_change",
-      attributes: { from_state: "closed", to_state: "open" },
+      attributes: {
+        from_state: "closed",
+        to_state: "open",
+        reason: "failure-threshold",
+      },
     });
     expect(t.metrics).toContainEqual({
       name: "forge_resilience_circuit_state",

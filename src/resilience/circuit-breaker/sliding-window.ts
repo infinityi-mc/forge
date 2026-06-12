@@ -10,14 +10,14 @@
  *   callers where a count-window can hold stale failures indefinitely.
  *
  * Both expose `record(outcome, now)`, `clear()`, and counters for
- * `failures` / `samples`, which the breaker reads to decide whether to
- * trip. Implementations are pure data — they hold no timers, no
+ * `failures` / `slow` / `samples`, which the breaker reads to decide
+ * whether to trip. Implementations are pure data — they hold no timers, no
  * subscriptions, and no references to the parent breaker.
  *
  * @module
  */
 
-export type Outcome = "success" | "failure";
+export type Outcome = "success" | "failure" | "slow";
 
 /**
  * Outcome-tracker contract shared by count- and time-based windows.
@@ -31,6 +31,8 @@ export interface SlidingWindow {
   clear(): void;
   /** Number of failures currently in the window. */
   failures(now: number): number;
+  /** Number of slow successful calls currently in the window. */
+  slow(now: number): number;
   /** Number of samples currently in the window. */
   samples(now: number): number;
 }
@@ -67,6 +69,14 @@ export class CountWindow implements SlidingWindow {
     let count = 0;
     for (let i = 0; i < this.filled; i++) {
       if (this.buffer[i] === "failure") count++;
+    }
+    return count;
+  }
+
+  slow(_now?: number): number {
+    let count = 0;
+    for (let i = 0; i < this.filled; i++) {
+      if (this.buffer[i] === "slow") count++;
     }
     return count;
   }
@@ -109,6 +119,15 @@ export class TimeWindow implements SlidingWindow {
     let count = 0;
     for (const entry of this.entries) {
       if (entry.outcome === "failure") count++;
+    }
+    return count;
+  }
+
+  slow(now: number): number {
+    this.evict(now);
+    let count = 0;
+    for (const entry of this.entries) {
+      if (entry.outcome === "slow") count++;
     }
     return count;
   }

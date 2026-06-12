@@ -157,6 +157,7 @@ describe("resilience telemetry integration", () => {
     const last = stateChanges[stateChanges.length - 1]!;
     expect(last.attributes["from_state"]).toBe("closed");
     expect(last.attributes["to_state"]).toBe("open");
+    expect(last.attributes["reason"]).toBe("failure-threshold");
   });
 
   test("rateLimit attempts counter only counts admitted executions", async () => {

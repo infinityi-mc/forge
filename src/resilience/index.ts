@@ -85,6 +85,8 @@ export {
   type CircuitBreakerOptions,
   type CircuitBreakerPolicy,
   type CircuitState,
+  type CircuitStateChangeEvent,
+  type CircuitStateChangeReason,
   type CircuitWindow,
 } from "./circuit-breaker";
 
