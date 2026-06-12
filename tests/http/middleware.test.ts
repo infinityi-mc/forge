@@ -14,6 +14,7 @@ import { problem } from "../../src/http/problem";
 import { ValidationError } from "../../src/http/errors";
 import {
   combine,
+  CircuitOpenError,
   rateLimit as resilienceRateLimit,
 } from "../../src/resilience";
 import { createTestTelemetry } from "../../src/telemetry/testing";
@@ -106,6 +107,52 @@ describe("problemDetails", () => {
         throw err;
       });
     expect((await testClient(router).get("/")).status).toBe(503);
+  });
+
+  test("maps structural CircuitOpenError retryAt to Retry-After", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .get("/", () => {
+        const err = new Error("open");
+        err.name = "CircuitOpenError";
+        (err as { retryAt?: number }).retryAt = Date.now() + 60_000;
+        throw err;
+      });
+    const res = await testClient(router).get("/");
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("60");
+  });
+
+  test("omits CircuitOpenError Retry-After when retryAt is not in the future", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .get("/", () => {
+        const err = new Error("open");
+        err.name = "CircuitOpenError";
+        (err as { retryAt?: number }).retryAt = Date.now() - 1_000;
+        throw err;
+      });
+    const res = await testClient(router).get("/");
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBeNull();
+  });
+
+  test("maps forge/resilience CircuitOpenError retryAt structurally", async () => {
+    const router = createRouter()
+      .use(problemDetails())
+      .get("/", () => {
+        throw new CircuitOpenError("open", {
+          state: "open",
+          openedAt: Date.now(),
+          retryAt: Date.now() + 60_000,
+        });
+      });
+    const res = await testClient(router).get("/");
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("60");
   });
 
   test("defaults unmapped errors to a leak-free 500 and logs them", async () => {
