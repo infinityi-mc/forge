@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  bulkheadComponent,
   consumerComponent,
+  circuitBreakerComponent,
   databaseComponent,
   httpServerComponent,
   messageBusComponent,
@@ -8,6 +10,7 @@ import {
   relayComponent,
   workerComponent,
 } from "../../src/lifecycle/adapters";
+import type { CircuitBreakerState } from "../../src/lifecycle/adapters";
 import { boot } from "../../src/lifecycle";
 import { TestClock } from "../../src/lifecycle/testing";
 import type { HealthContext } from "../../src/lifecycle/types";
@@ -183,6 +186,102 @@ describe("messaging adapters", () => {
       await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
       expect(calls).toEqual(["start", "stop"]);
     }
+  });
+});
+
+describe("resilience adapters", () => {
+  test("circuitBreakerComponent maps closed, half-open, and open states", async () => {
+    let state: CircuitBreakerState = "closed";
+    const breaker = {
+      get state() {
+        return state;
+      },
+    };
+    const c = circuitBreakerComponent("upstream-breaker", breaker);
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      data: { state: "closed" },
+    });
+
+    state = "half-open";
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "circuit breaker is half-open",
+      data: { state: "half-open" },
+    });
+
+    state = "open";
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "unhealthy",
+      detail: "circuit breaker is open",
+      data: { state: "open" },
+    });
+  });
+
+  test("circuitBreakerComponent can report open breakers as degraded", async () => {
+    const c = circuitBreakerComponent(
+      "upstream-breaker",
+      { state: "open" },
+      { degraded: true },
+    );
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "circuit breaker is open",
+      data: { state: "open" },
+    });
+  });
+
+  test("bulkheadComponent reports queued callers as degraded by default", async () => {
+    const healthy = bulkheadComponent("upstream-bulkhead", {
+      active: 2,
+      queued: 0,
+    });
+    expect(await healthy.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      data: { active: 2, queued: 0 },
+    });
+
+    const saturated = bulkheadComponent("upstream-bulkhead", {
+      active: 10,
+      queued: 1,
+    });
+    expect(await saturated.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      data: { active: 10, queued: 1 },
+    });
+  });
+
+  test("bulkheadComponent can report saturation as unhealthy", async () => {
+    const c = bulkheadComponent(
+      "upstream-bulkhead",
+      { active: 10, queued: 2 },
+      { unhealthyAtSaturation: true },
+    );
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "unhealthy",
+      data: { active: 10, queued: 2 },
+    });
+  });
+
+  test("custom resilience adapter healthchecks override derived readiness", async () => {
+    const breaker = circuitBreakerComponent("upstream-breaker", { state: "open" }, {
+      healthcheck: () => ({ status: "healthy", detail: "maintenance override" }),
+    });
+    const bulkhead = bulkheadComponent("upstream-bulkhead", { active: 10, queued: 3 }, {
+      healthcheck: () => ({ status: "healthy", detail: "queue ignored" }),
+    });
+
+    expect(await breaker.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      detail: "maintenance override",
+    });
+    expect(await bulkhead.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      detail: "queue ignored",
+    });
   });
 });
 

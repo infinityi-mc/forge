@@ -1,6 +1,6 @@
 /**
  * `forge/lifecycle/adapters` — thin official adapters that wrap `forge/data`,
- * `forge/http`, and `forge/messaging` objects into {@link Component}s with
+ * `forge/http`, `forge/messaging`, and `forge/resilience` objects into {@link Component}s with
  * sensible `healthcheck`s, so the Quick Start `components: [db, http, ...]`
  * "just works".
  *
@@ -19,9 +19,15 @@ export {
   relayComponent,
   workerComponent,
 } from "./messaging";
+export { bulkheadComponent, circuitBreakerComponent } from "./resilience";
 
 export type {
   AdapterOptions,
+  BulkheadComponentOptions,
+  BulkheadLike,
+  CircuitBreakerComponentOptions,
+  CircuitBreakerLike,
+  CircuitBreakerState,
   DatabaseComponentOptions,
   DatabaseLike,
   HttpServerComponentOptions,

@@ -280,8 +280,29 @@ const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
 
 - **HTTP client**: `forge/http/client` accepts a structural resilience pipeline through `createHttpClient({ resilience })`.
 - **HTTP middleware**: `forge/http/middleware` includes `rateLimit({ limiter })`, and `problemDetails()` maps structural rate-limit and circuit-open errors to RFC 7807 responses.
+- **Lifecycle**: `forge/lifecycle/adapters` exposes readiness components for circuit breakers and bulkheads.
 - **Messaging**: consumers, jobs, and outbox relays accept retry policies structurally; policy state remains owned by the application.
 - **Security**: JWKS key stores accept a structural pipeline for resilient cache fetches.
+
+### Lifecycle readiness
+
+```ts
+import { circuitBreaker, bulkhead } from "forge/resilience";
+import {
+  circuitBreakerComponent,
+  bulkheadComponent,
+} from "forge/lifecycle/adapters";
+
+const breaker = circuitBreaker({ failureThreshold: 0.5, resetTimeoutMs: 30_000 });
+const limiter = bulkhead({ maxConcurrent: 20, maxQueue: 50 });
+
+const components = [
+  circuitBreakerComponent("payments-breaker", breaker),
+  bulkheadComponent("payments-bulkhead", limiter),
+];
+```
+
+These adapters are readiness checks, not liveness kill switches: an open breaker is `unhealthy` by default, a half-open breaker is `degraded`, and a bulkhead with queued callers is `degraded` unless `unhealthyAtSaturation` is enabled.
 
 ## Best practices
 
