@@ -21,7 +21,7 @@ Most resilience libraries in the JS/TS ecosystem suffer from three problems: tim
 6. **`bulkhead`** — concurrency-limiting semaphore with a bounded wait queue; `BulkheadFullError` when both slots and queue are saturated.
 7. **`fallback`** — substitute a secondary result when the primary fails; predicate-gated; preserves the original error on `cause`.
 8. **`hedge`** — fire speculative parallel attempts on a delay schedule. First to succeed wins; losers are aborted via their own `AbortSignal` so cooperating I/O actually cancels.
-9. **`forge/resilience/testing`** — deterministic `TestClock`, `executionContext()` / `createTestResilience()` factories, and `STANDARD_RESILIENCE_SCENARIOS` + `assertConformance(...)` so wrappers around the canonical policies stay drop-in compatible.
+9. **`forge/resilience/testing`** — deterministic `TestClock`, `executionContext()` / `createTestResilience()` factories, a standalone `createTestResilienceTelemetry()` double, and standard plus policy-specific conformance suites so wrappers around the canonical policies stay drop-in compatible.
 
 ---
 
@@ -89,7 +89,8 @@ src/resilience/
 └── testing/
     ├── index.ts          # TestClock, executionContext, createTestResilience
     ├── clock.ts          # TestClock implementation
-    └── conformance.ts    # STANDARD_RESILIENCE_SCENARIOS, assertConformance
+    ├── conformance.ts    # Standard and policy-specific conformance suites
+    └── telemetry.ts      # Standalone resilience telemetry test double
 ```
 
 ---
@@ -256,11 +257,51 @@ await assertConformance(
 );
 ```
 
+### Standalone telemetry tests
+
+```ts
+import { retry } from "forge/resilience";
+import {
+  TestClock,
+  createTestResilienceTelemetry,
+} from "forge/resilience/testing";
+
+const telemetry = createTestResilienceTelemetry();
+const clock = new TestClock();
+const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
+
+// Execute the policy, then assert against telemetry.metrics and
+// telemetry.spanEvents without importing forge/telemetry/testing.
+```
+
+---
+
+## Integration status
+
+- **HTTP client**: `forge/http/client` accepts a structural resilience pipeline through `createHttpClient({ resilience })`.
+- **HTTP middleware**: `forge/http/middleware` includes `rateLimit({ limiter })`, and `problemDetails()` maps structural rate-limit and circuit-open errors to RFC 7807 responses.
+- **Messaging**: consumers, jobs, and outbox relays accept retry policies structurally; policy state remains owned by the application.
+- **Security**: JWKS key stores accept a structural pipeline for resilient cache fetches.
+
+## Best practices
+
+- Build one breaker, limiter, or bulkhead per isolated dependency or tenant; sharing one instance across unrelated dependencies couples their failure modes.
+- Put `retry` outside `timeout` when each attempt needs its own deadline, and pass `ctx.signal` to the underlying I/O.
+- Use `TestClock` for policy tests that involve sleeps, backoff, timeout, rate-limit wait mode, or hedge delay.
+- Run `STANDARD_RESILIENCE_SCENARIOS` against wrapper pipelines and the focused policy-specific suites when adapting policy-like implementations.
+
+## Common pitfalls
+
+- A timeout only cancels work that observes `ctx.signal`; ignoring the signal leaves background I/O running.
+- In-memory breaker, limiter, bulkhead, and wait-queue state is per process, not distributed across replicas.
+- `fallback` is a degraded answer, not a retry budget. Place it outside retry if fallback should run only after retries are exhausted.
+- `hedge` can increase upstream load. Use bounded attempts and ensure losing attempts receive and honor abort signals.
+
 ---
 
 ## Constraints (out of scope by design)
 
 - **No distributed state.** Rate limiters and breakers are in-memory, per-instance. 10 pods = 10 independent breakers. Distributed limits belong in your API gateway or a future `forge/distributed` module.
-- **No auto-magic wrapping.** We do not monkey-patch `globalThis.fetch` or `http.request`. Wrap explicitly or use `forge/http` (TBD).
-- **No persistent queues.** Bulkhead and rate-limit queues are in-memory. For crash-safe queues, use `forge/messaging` (TBD).
+- **No auto-magic wrapping.** We do not monkey-patch `globalThis.fetch` or `http.request`. Wrap explicitly or pass a resilience pipeline to `forge/http/client`.
+- **No persistent queues.** Bulkhead and rate-limit queues are in-memory. For crash-safe queues, use `forge/messaging`.
 - **No workflow orchestration.** Not a state machine for long-running sagas — use Temporal / Inngest for that.

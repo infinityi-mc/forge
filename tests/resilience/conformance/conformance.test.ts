@@ -8,7 +8,12 @@ import {
   timeout,
 } from "../../../src/resilience";
 import {
+  BULKHEAD_RESILIENCE_SCENARIOS,
+  CLOCK_DETERMINISM_SCENARIOS,
+  COMPOSITION_RESILIENCE_SCENARIOS,
+  FALLBACK_RESILIENCE_SCENARIOS,
   POLICY_SPECIFIC_SCENARIOS,
+  RATE_LIMIT_RESILIENCE_SCENARIOS,
   STANDARD_RESILIENCE_SCENARIOS,
   assertConformance,
   assertPolicyConformance,
@@ -70,6 +75,26 @@ describe("POLICY_SPECIFIC_SCENARIOS", () => {
   // so the factory is unused but required by the suite shape.
   test("every policy-specific scenario passes", async () => {
     await assertConformance(() => combine(), POLICY_SPECIFIC_SCENARIOS);
+  });
+
+  test("bulkhead scenarios pass as a focused suite", async () => {
+    await assertConformance(() => combine(), BULKHEAD_RESILIENCE_SCENARIOS);
+  });
+
+  test("fallback scenarios pass as a focused suite", async () => {
+    await assertConformance(() => combine(), FALLBACK_RESILIENCE_SCENARIOS);
+  });
+
+  test("rate-limit scenarios pass as a focused suite", async () => {
+    await assertConformance(() => combine(), RATE_LIMIT_RESILIENCE_SCENARIOS);
+  });
+
+  test("composition scenarios pass as a focused suite", async () => {
+    await assertConformance(() => combine(), COMPOSITION_RESILIENCE_SCENARIOS);
+  });
+
+  test("clock determinism scenarios pass as a focused suite", async () => {
+    await assertConformance(() => combine(), CLOCK_DETERMINISM_SCENARIOS);
   });
 });
 
