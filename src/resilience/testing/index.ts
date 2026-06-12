@@ -4,22 +4,37 @@
  * Ships a deterministic {@link TestClock} that policies accept via
  * their `clock` option, an {@link executionContext} factory for unit
  * tests that exercise a `Policy` directly, the
- * {@link STANDARD_RESILIENCE_SCENARIOS} conformance suite, and a
- * one-call {@link createTestResilience} harness that wires the three
- * together for the common case.
+ * {@link STANDARD_RESILIENCE_SCENARIOS} conformance suite, a
+ * standalone {@link createTestResilienceTelemetry} double, and a
+ * one-call {@link createTestResilience} harness that wires the common
+ * primitives together.
  *
  * @module
  */
 
 export { TestClock } from "./clock";
 export {
+  BULKHEAD_RESILIENCE_SCENARIOS,
+  CLOCK_DETERMINISM_SCENARIOS,
+  COMPOSITION_RESILIENCE_SCENARIOS,
+  FALLBACK_RESILIENCE_SCENARIOS,
   POLICY_SPECIFIC_SCENARIOS,
+  RATE_LIMIT_RESILIENCE_SCENARIOS,
   STANDARD_RESILIENCE_SCENARIOS,
   assertConformance,
   assertPolicyConformance,
   type PipelineFactory,
   type ResilienceConformanceScenario,
 } from "./conformance";
+export {
+  createTestResilienceTelemetry,
+  type RecordedAttributeValue,
+  type RecordedAttributes,
+  type RecordedMetric,
+  type RecordedMetricKind,
+  type RecordedSpanEvent,
+  type TestResilienceTelemetry,
+} from "./telemetry";
 
 import { TestClock } from "./clock";
 import type { ExecutionContext } from "../types";
