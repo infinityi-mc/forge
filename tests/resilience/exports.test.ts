@@ -3,9 +3,11 @@ import * as root from "../../src";
 import * as resilience from "../../src/resilience";
 import * as bulkhead from "../../src/resilience/bulkhead";
 import * as circuitBreaker from "../../src/resilience/circuit-breaker";
+import * as config from "../../src/resilience/config";
 import * as errors from "../../src/resilience/errors";
 import * as fallback from "../../src/resilience/fallback";
 import * as hedge from "../../src/resilience/hedge";
+import * as messaging from "../../src/resilience/messaging";
 import * as rateLimit from "../../src/resilience/rate-limit";
 import * as retry from "../../src/resilience/retry";
 import * as testing from "../../src/resilience/testing";
@@ -69,5 +71,20 @@ describe("resilience exports", () => {
     expect(testing.RATE_LIMIT_RESILIENCE_SCENARIOS.length).toBeGreaterThan(0);
     expect(testing.COMPOSITION_RESILIENCE_SCENARIOS.length).toBeGreaterThan(0);
     expect(testing.CLOCK_DETERMINISM_SCENARIOS.length).toBeGreaterThan(0);
+  });
+
+  test("optional integration subpaths expose scoped helpers", () => {
+    expect(config.resilienceConfigSchema.retry).toBeDefined();
+    expect(config.retryOptionsFromConfig).toBeFunction();
+    expect(config.timeoutOptionsFromConfig).toBeFunction();
+    expect(config.circuitBreakerOptionsFromConfig).toBeFunction();
+    expect(config.rateLimitOptionsFromConfig).toBeFunction();
+    expect(config.bulkheadOptionsFromConfig).toBeFunction();
+    expect(config.fallbackOptionsFromConfig).toBeFunction();
+    expect(config.hedgeOptionsFromConfig).toBeFunction();
+    expect(messaging.DEFAULT_CIRCUIT_BREAKER_STATE_MESSAGE_TYPE).toBe(
+      "forge.resilience.circuit.state_changed",
+    );
+    expect(messaging.circuitBreakerStatePublisher).toBeFunction();
   });
 });

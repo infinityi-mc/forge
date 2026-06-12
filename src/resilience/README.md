@@ -281,7 +281,9 @@ const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
 - **HTTP client**: `forge/http/client` accepts a structural resilience pipeline through `createHttpClient({ resilience })`.
 - **HTTP middleware**: `forge/http/middleware` includes `rateLimit({ limiter })`, and `problemDetails()` maps structural rate-limit and circuit-open errors to RFC 7807 responses.
 - **Lifecycle**: `forge/lifecycle/adapters` exposes readiness components for circuit breakers and bulkheads.
+- **Config**: `forge/resilience/config` exposes opt-in schema fragments and pure option mappers.
 - **Messaging**: consumers, jobs, and outbox relays accept retry policies structurally; policy state remains owned by the application.
+- **Messaging state events**: `forge/resilience/messaging` can publish circuit-breaker state changes through a structural message bus.
 - **Security**: JWKS key stores accept a structural pipeline for resilient cache fetches.
 
 ### Lifecycle readiness
@@ -303,6 +305,47 @@ const components = [
 ```
 
 These adapters are readiness checks, not liveness kill switches: an open breaker is `unhealthy` by default, a half-open breaker is `degraded`, and a bulkhead with queued callers is `degraded` unless `unhealthyAtSaturation` is enabled.
+
+### Config helpers
+
+```ts
+import { defineConfig } from "forge/config";
+import {
+  resilienceConfigSchema,
+  retryOptionsFromConfig,
+  timeoutOptionsFromConfig,
+} from "forge/resilience/config";
+import { combine, retry, timeout } from "forge/resilience";
+
+const config = defineConfig({ resilience: resilienceConfigSchema });
+
+const pipeline = combine(
+  retry(retryOptionsFromConfig(config.resilience.retry)),
+  timeout(timeoutOptionsFromConfig(config.resilience.timeout)),
+);
+```
+
+The helpers are schema fragments and mappers only. They do not load config globally, and policy constructors still enforce numeric range validation.
+
+### Circuit state messages
+
+```ts
+import { circuitBreaker } from "forge/resilience";
+import { circuitBreakerStatePublisher } from "forge/resilience/messaging";
+
+const breaker = circuitBreaker({
+  failureThreshold: 0.5,
+  resetTimeoutMs: 30_000,
+  onStateChange: circuitBreakerStatePublisher({
+    bus,
+    source: "payments",
+    headers: { service: "checkout" },
+    onError: (error) => logger.warn("failed to publish breaker state", { error }),
+  }),
+});
+```
+
+Publishing is best-effort and observational. A publish failure is sent to `onError` when provided and never changes breaker admission behavior.
 
 ## Best practices
 
