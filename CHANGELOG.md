@@ -1,0 +1,36 @@
+# Changelog
+
+## 1.0.1 - 2026-06-12
+
+### Added
+
+- Added `./resilience/retry` and `./resilience/timeout` package subpath exports and JavaScript build entrypoints.
+- Added `forge/resilience/testing` telemetry recording helpers via `createTestResilienceTelemetry()`.
+- Added focused resilience conformance suites for bulkhead, fallback, rate-limit, policy composition, and deterministic clock scenarios.
+- Added circuit-breaker state-change events with stable transition reasons and `onStateChange` observer support.
+- Added circuit-breaker slow-call threshold support for detecting degraded successful dependencies.
+- Added lifecycle readiness adapters for resilience policies through `circuitBreakerComponent()` and `bulkheadComponent()` in `forge/lifecycle/adapters`.
+- Added opt-in `forge/resilience/config` schema fragments and pure option mappers for retry, timeout, circuit breaker, rate limit, bulkhead, fallback toggles, and hedge.
+- Added opt-in `forge/resilience/messaging` circuit-breaker state publisher using a structural message bus interface.
+- Added HTTP integration regression coverage for resilience pipeline cancellation, rate-limit mapping, and circuit-open error handling.
+
+### Changed
+
+- Updated resilience documentation with current integration status, best practices, lifecycle readiness examples, config helpers, messaging state publishing, and HTTP integration examples.
+- Expanded package export tests to cover resilience policy subpaths, optional integration subpaths, errors, and testing surfaces.
+- Circuit-breaker telemetry state-change events now include the transition reason.
+- Circuit-breaker slow calls are tracked separately from failures so failure metrics preserve their original meaning.
+- HTTP `problemDetails()` now maps structural `CircuitOpenError.retryAt` timestamps to `Retry-After` headers when the retry time is in the future.
+
+### Fixed
+
+- Ensured circuit-breaker observer callbacks cannot alter breaker admission behavior when they throw.
+- Ensured circuit-breaker state publishing is best-effort: synchronous publish errors, asynchronous publish rejections, and `onError` failures are isolated from caller behavior.
+- Ensured HTTP caller cancellation still aborts the underlying fetch when a resilience pipeline is present.
+- Removed stale resilience documentation language that implied existing HTTP, messaging, and security seams were still missing.
+
+### Compatibility
+
+- No breaking API changes are expected for existing resilience users.
+- New circuit-breaker slow-call behavior is disabled unless both `slowCallDurationMs` and `slowCallThreshold` are configured.
+- New lifecycle, config, and messaging integrations are explicit opt-in surfaces and are not imported from the main `forge/resilience` barrel.
