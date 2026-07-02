@@ -124,7 +124,7 @@ isSecret(s);       // true
 
 ### `defineDynamicConfig(schema, options): DynamicConfigHandle<S>`
 
-Runtime-mutable configuration backed by a polling provider.
+Runtime-mutable configuration backed by a provider that returns raw string snapshots keyed by dotted schema path.
 
 ```ts
 import { defineDynamicConfig, t, pollingProvider } from "@infinityi/forge/config";
@@ -133,8 +133,9 @@ const handle = await defineDynamicConfig(
   { featureFlags: { darkMode: t.boolean.default(false) } },
   {
     provider: pollingProvider({
+      name: "feature-flags",
       intervalMs: 30_000,
-      fetch: async () => ({ featureFlags: { darkMode: true } }),
+      fetch: async () => ({ "featureFlags.darkMode": "true" }),
     }),
     onChange(oldCfg, newCfg, changedKeys) {
       console.log("changed:", changedKeys);
@@ -180,6 +181,8 @@ diff({ a: { x: 1 } }, { a: { x: 2 } }); // ["a.x"]
 | `dotenvSource(options?)` | Parse `.env` file (disabled in production) |
 | `cliSource(options?)` | Parse `--key=value` CLI flags |
 | `defaultSources(env)` | Build the default stack for a given env |
+
+Built-in file support is limited to `.env`. General config files and write/update persistence require a custom source/provider.
 
 ### Diagnostics
 

@@ -23,11 +23,10 @@ Most config libraries (`dotenv`, `convict`, `node-config`) ship a runtime-typed 
 6. Provider stack — `staticProvider` (single-snapshot, useful in tests), `pollingProvider` (BYO `fetch` + `intervalMs`, wraps LaunchDarkly / AppConfig / DB feeds).
 7. Diagnostics — aggregating box-drawn table renderer + `writeFailFast` (stderr + `exit(1)`).
 8. Observability — `defineConfig({ logger })` and `defineDynamicConfig({ logger })` emit structured boot-summary + dynamic-update lines via a **structurally-typed** `Logger`. No hard dependency on `forge/telemetry/log`.
-9. Error taxonomy — `ConfigError` base + `ConfigValidationError` (with structured `issues[]`), `ConfigSourceError`, `ConfigSchemaError`, `ConfigSecretAccessError`, `ConfigProviderError`, `ConfigFrozenError`.
+9. Testing — `mockConfig` (ALS-scoped overrides), `recordingProvider`, conformance scenarios for BYO provider implementations.
+10. Error taxonomy — `ConfigError` base + `ConfigValidationError` (with structured `issues[]`), `ConfigSourceError`, `ConfigSchemaError`, `ConfigSecretAccessError`, `ConfigProviderError`, `ConfigFrozenError`.
 
-Upcoming:
-
-- **PR C** — `forge/config/testing`: `mockConfig` (ALS-scoped overrides), `recordingProvider`, conformance scenarios for BYO provider implementations.
+Current boundary: built-in file support is `.env` only, and the config APIs are read-only. General JSON/YAML/TOML file sources and write/update persistence are intentionally not shipped today.
 
 ---
 
@@ -72,8 +71,17 @@ src/config/
 │   ├── static.ts                     # staticProvider
 │   └── polling.ts                    # pollingProvider
 │
+├── testing/
+│   ├── index.ts                      # public test helpers
+│   ├── mock.ts                       # ALS-scoped overrides
+│   ├── context.ts                    # override context internals
+│   ├── conformance.ts                # provider conformance scenarios
+│   └── recording-provider.ts         # controllable provider for tests
+│
 ├── logger.ts                         # Logger interface (structural)
+├── mockable.ts                       # static config override proxy
 ├── observability.ts                  # boot-summary + dynamic-update emitters
+├── overrides.ts                      # override resolution helpers
 └── validate.ts                       # shared static + dynamic validator core
 ```
 
@@ -125,6 +133,8 @@ Sources are queried lowest-priority first; the highest-priority source that retu
 2. **`.env` files** — automatically disabled when the resolved environment is `"production"`. Intended for dev/test only.
 3. **Environment variables** — `Bun.env` (falls back to `process.env`). The 12-Factor source of truth.
 4. **CLI arguments** — `--app.port=8080` or `--app.port 8080`. Accepts the dotted path or the env-var form.
+
+There is no built-in JSON/YAML/TOML config-file loader or write API. Use a custom `ConfigSource` / `DynamicConfigProvider` when a deployment needs those.
 
 The environment is resolved from `options.environment` → `APP_ENV` → `NODE_ENV` → `"development"`.
 
