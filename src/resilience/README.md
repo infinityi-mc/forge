@@ -286,6 +286,38 @@ const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
 - **Messaging state events**: `forge/resilience/messaging` can publish circuit-breaker state changes through a structural message bus.
 - **Security**: JWKS key stores accept a structural pipeline for resilient cache fetches.
 
+### HTTP integration
+
+```ts
+import { createHttpClient } from "forge/http/client";
+import { combine, timeout } from "forge/resilience";
+
+const client = createHttpClient({
+  baseUrl: "https://payments.internal",
+  resilience: combine(timeout({ ms: 2_000 })),
+});
+
+const payment = await client.get("/payments/pay_123");
+```
+
+The client accepts any structural pipeline with `execute(op)`. Its fetch signal combines caller cancellation, client deadlines, and the resilience pipeline signal, so a timeout aborts the underlying socket.
+
+```ts
+import { problemDetails, rateLimit } from "forge/http/middleware";
+import { createRouter } from "forge/http/server";
+import { combine, rateLimit as resilienceRateLimit } from "forge/resilience";
+
+const limiter = combine(resilienceRateLimit({
+  algorithm: { kind: "sliding-window", limit: 100, windowMs: 60_000 },
+}));
+
+const router = createRouter()
+  .use(problemDetails())
+  .use(rateLimit({ limiter }));
+```
+
+`problemDetails()` maps resilience rate-limit errors to `429` with `Retry-After`, and circuit-open errors to `503` with `Retry-After` when the error exposes a future `retryAt` timestamp.
+
 ### Lifecycle readiness
 
 ```ts
