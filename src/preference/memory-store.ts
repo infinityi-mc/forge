@@ -19,22 +19,26 @@ export function memoryStore(
   initial: PreferenceSnapshot = {},
   options: MemoryStoreOptions = {},
 ): MemoryPreferenceStore {
-  let current = { ...initial };
+  let current = cloneSnapshot(initial);
   const name = options.name ?? "memory";
 
   return {
     name,
     async load(): Promise<PreferenceSnapshot> {
-      return { ...current };
+      return cloneSnapshot(current);
     },
     async save(snapshot: PreferenceSnapshot): Promise<void> {
-      current = { ...snapshot };
+      current = cloneSnapshot(snapshot);
     },
     snapshot(): PreferenceSnapshot {
-      return { ...current };
+      return cloneSnapshot(current);
     },
     replace(snapshot: PreferenceSnapshot): void {
-      current = { ...snapshot };
+      current = cloneSnapshot(snapshot);
     },
   };
+}
+
+function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
+  return structuredClone(snapshot) as PreferenceSnapshot;
 }
