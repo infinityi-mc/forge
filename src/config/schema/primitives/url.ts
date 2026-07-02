@@ -10,7 +10,7 @@
  */
 
 import { Secret } from "../../secret";
-import { Leaf, type LeafParseResult } from "../types";
+import { Leaf, type DefaultedLeafMarker, type LeafParseResult } from "../types";
 
 export class UrlLeaf extends Leaf<URL> {
   readonly kind = "url";
@@ -37,7 +37,9 @@ export class UrlLeaf extends Leaf<URL> {
    * across `console.log`, `JSON.stringify`, and `util.inspect`. Useful
    * for connection strings whose host segment contains credentials.
    */
-  secret(): UrlSecretLeaf {
+  secret(): this extends DefaultedLeafMarker<URL>
+    ? UrlSecretLeaf & DefaultedLeafMarker<Secret<URL>>
+    : UrlSecretLeaf {
     const c = new UrlSecretLeaf();
     this._copyBaseTo(c);
     c.isSecret = true;
@@ -47,7 +49,9 @@ export class UrlLeaf extends Leaf<URL> {
     if (c.hasDefault) {
       c.defaultValue = new Secret(c.defaultValue as unknown as URL);
     }
-    return c;
+    return c as this extends DefaultedLeafMarker<URL>
+      ? UrlSecretLeaf & DefaultedLeafMarker<Secret<URL>>
+      : UrlSecretLeaf;
   }
 }
 

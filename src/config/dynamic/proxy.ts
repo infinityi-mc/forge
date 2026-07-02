@@ -26,13 +26,25 @@ export interface SnapshotRef<T> {
   current: T;
 }
 
+export interface SnapshotProxyOptions {
+  readonly namespace?: string;
+  readonly mutationHint?: string;
+}
+
 /**
  * Build a Proxy of `T` whose every read goes through `ref.current`.
  * The Proxy is opaque — `Object.keys`, `for…in`, `in`, and property
  * descriptor lookups all delegate to the live snapshot, which lets
  * callers spread / inspect the tree as if it were a plain object.
  */
-export function createSnapshotProxy<T extends object>(ref: SnapshotRef<T>): T {
+export function createSnapshotProxy<T extends object>(
+  ref: SnapshotRef<T>,
+  options: SnapshotProxyOptions = {},
+): T {
+  const namespace = options.namespace ?? "forge/config";
+  const mutationHint =
+    options.mutationHint ??
+    "dynamic config is read-only; mutations come from the provider.";
   // The handler target is a plain `{}`; every trap re-derives its
   // answer from `ref.current`. Using `ref.current` directly as the
   // target would freeze the proxy's behaviour to the *initial* tree.
@@ -65,17 +77,17 @@ export function createSnapshotProxy<T extends object>(ref: SnapshotRef<T>): T {
     // values enter the tree.
     set(_target, key) {
       throw new TypeError(
-        `forge/config: cannot assign to '${String(key)}' — dynamic config is read-only; mutations come from the provider.`,
+        `${namespace}: cannot assign to '${String(key)}' — ${mutationHint}`,
       );
     },
     deleteProperty(_target, key) {
       throw new TypeError(
-        `forge/config: cannot delete '${String(key)}' — dynamic config is read-only; mutations come from the provider.`,
+        `${namespace}: cannot delete '${String(key)}' — ${mutationHint}`,
       );
     },
     defineProperty(_target, key) {
       throw new TypeError(
-        `forge/config: cannot defineProperty '${String(key)}' — dynamic config is read-only; mutations come from the provider.`,
+        `${namespace}: cannot defineProperty '${String(key)}' — ${mutationHint}`,
       );
     },
   };
