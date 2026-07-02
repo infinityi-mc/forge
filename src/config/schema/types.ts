@@ -30,6 +30,27 @@ export interface LeafState<T> {
   isSecret: boolean;
 }
 
+/** Type-level marker added by `.default(...)` for schema surfaces that require fallbacks. */
+export const DEFAULTED_LEAF: unique symbol = Symbol("forge/config/defaulted-leaf");
+
+export interface DefaultedLeafMarker<T> {
+  readonly [DEFAULTED_LEAF]: T;
+  readonly hasDefault: true;
+  readonly defaultValue: T;
+}
+
+export type DefaultedLeaf<T> = Leaf<T> & DefaultedLeafMarker<T>;
+
+/** Type-level marker added by `.optional()` for schema surfaces that can safely fall back to `undefined`. */
+export const OPTIONAL_LEAF: unique symbol = Symbol("forge/config/optional-leaf");
+
+export interface OptionalLeafMarker<T> {
+  readonly [OPTIONAL_LEAF]: T;
+  readonly isOptional: true;
+}
+
+export type OptionalLeaf<T> = Leaf<T | undefined> & OptionalLeafMarker<T>;
+
 /**
  * Marker symbol that identifies a value as a schema leaf. Used by the
  * walker to distinguish leaves from nested `ConfigSchema` objects
@@ -99,11 +120,11 @@ export abstract class Leaf<T> {
    * the leaf. The leaf still reports its env-var name in the boot
    * summary, but no diagnostic fires when the env var is absent.
    */
-  default(value: T): this {
+  default(value: T): this & DefaultedLeafMarker<T> {
     const c = this._clone();
     c.hasDefault = true;
     c.defaultValue = value;
-    return c;
+    return c as this & DefaultedLeafMarker<T>;
   }
 
   /**
@@ -112,20 +133,20 @@ export abstract class Leaf<T> {
    * reads — required wins. Most callers reach for it as a readability
    * marker on a leaf that was already required.
    */
-  required(): this {
+  required(): this extends OptionalLeafMarker<infer U> ? Leaf<U> : this {
     const c = this._clone();
     c.isOptional = false;
-    return c;
+    return c as this extends OptionalLeafMarker<infer U> ? Leaf<U> : this;
   }
 
   /**
    * Mark the leaf as optional — the produced type widens to
    * `T | undefined` and a missing value is not a validation error.
    */
-  optional(): Leaf<T | undefined> {
+  optional(): OptionalLeaf<T> {
     const c = this._clone();
     c.isOptional = true;
-    return c as unknown as Leaf<T | undefined>;
+    return c as unknown as OptionalLeaf<T>;
   }
 
   /**
