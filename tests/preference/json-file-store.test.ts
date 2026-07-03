@@ -84,6 +84,66 @@ describe("jsonFileStore", () => {
     });
   });
 
+  test("flush drains saves queued while an earlier write is in flight", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const store = jsonFileStore({ path: file, debounceMs: 0 });
+      const originalWrite = Bun.write;
+      let releaseFirstWrite: (() => void) | undefined;
+      let markFirstWriteStarted: (() => void) | undefined;
+      const firstWriteStarted = new Promise<void>((resolve) => {
+        markFirstWriteStarted = resolve;
+      });
+      let writeCalls = 0;
+      (Bun as unknown as { write: typeof Bun.write }).write = (async (
+        ...args: Parameters<typeof Bun.write>
+      ) => {
+        writeCalls += 1;
+        if (writeCalls === 1) {
+          markFirstWriteStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseFirstWrite = resolve;
+          });
+        }
+        return originalWrite(...args);
+      }) as typeof Bun.write;
+
+      try {
+        const firstWrite = store.save({ "first.value": 1 });
+        await firstWriteStarted;
+        const secondWrite = store.save({ "second.value": 2 });
+        const flushed = store.flush?.();
+
+        releaseFirstWrite?.();
+        await Promise.all([firstWrite, secondWrite, flushed]);
+
+        expect(await store.load()).toEqual({ "second.value": 2 });
+      } finally {
+        (Bun as unknown as { write: typeof Bun.write }).write = originalWrite;
+        await store.shutdown?.().catch(() => {});
+      }
+    });
+  });
+
+  test("flush propagates concurrent background write errors", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const store = jsonFileStore({ path: file, debounceMs: 1 });
+      const originalWrite = Bun.write;
+      (Bun as unknown as { write: typeof Bun.write }).write = (async () => {
+        throw new Error("queued write failed");
+      }) as typeof Bun.write;
+
+      try {
+        await store.save({ "first.value": 1 });
+        await expect(store.flush?.()).rejects.toThrow("queued write failed");
+      } finally {
+        (Bun as unknown as { write: typeof Bun.write }).write = originalWrite;
+        await store.shutdown?.().catch(() => {});
+      }
+    });
+  });
+
   test("preserves __proto__ as data without polluting loaded snapshots", async () => {
     await withTempDir(async (dir) => {
       const file = join(dir, "prefs.json");

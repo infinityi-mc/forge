@@ -31,6 +31,7 @@ import {
 } from "./observability";
 import {
   cloneStoreSnapshot,
+  CorruptPreferenceSnapshotValue,
   setSnapshotValue,
   tryCloneStoreSnapshotValue,
 } from "./store-snapshot";
@@ -195,7 +196,7 @@ export async function definePreferences<
       versioning,
     );
     scope.explicit = cloneSnapshot(prepared.explicit);
-    scope.preserved = cloneSnapshot(prepared.preserved);
+    scope.preserved = cloneOpaqueSnapshot(prepared.preserved);
     scope.version = prepared.version;
     diagnostics.push(...prepared.diagnostics);
     loadFallbackKeys.push(...prepared.fallbackKeys);
@@ -314,7 +315,7 @@ export async function definePreferences<
         versioning,
       );
       scope.explicit = cloneSnapshot(prepared.explicit);
-      scope.preserved = cloneSnapshot(prepared.preserved);
+      scope.preserved = cloneOpaqueSnapshot(prepared.preserved);
       scope.version = prepared.version;
       addDiagnostics(prepared.diagnostics);
       const applied = applyMergedScopes(prepared.fallbackKeys);
@@ -618,7 +619,7 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     return invalidStoreSnapshotFallback(scope, versioning.currentVersion, snapshot);
   }
 
-  const cloneResult = cloneRawSnapshot(snapshot);
+  const cloneResult = cloneRawSnapshot(snapshot, leafPathSet);
   const cloned = cloneResult.snapshot;
   const versionResult = readSnapshotVersion(cloned, versioning.currentVersion);
   const withoutVersion = snapshotWithoutKey(cloned, VERSION_KEY);
@@ -653,7 +654,7 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
   const validated = validatePreferenceSnapshot(schema, split.known);
   return {
     explicit: cloneSnapshot(validated.explicit),
-    preserved: cloneSnapshot(split.unknown),
+    preserved: cloneOpaqueSnapshot(split.unknown),
     version,
     diagnostics: [
       ...cloneResult.diagnostics.map((diagnostic) =>
@@ -788,20 +789,20 @@ async function runMigrations(
   const currentVersion = versioning.currentVersion;
   if (currentVersion === undefined) {
     return {
-      snapshot: cloneSnapshot(snapshot),
+      snapshot: cloneOpaqueSnapshot(snapshot),
       version: storedVersion,
       appliedVersions: [],
     };
   }
   if (storedVersion !== undefined && storedVersion > currentVersion) {
     return {
-      snapshot: cloneSnapshot(snapshot),
+      snapshot: cloneOpaqueSnapshot(snapshot),
       version: storedVersion,
       appliedVersions: [],
     };
   }
 
-  let next = cloneSnapshot(snapshot);
+  let next = cloneOpaqueSnapshot(snapshot);
   const fromVersion = storedVersion ?? 1;
   const appliedVersions: number[] = [];
   for (let version = fromVersion + 1; version <= currentVersion; version += 1) {
@@ -915,7 +916,7 @@ function buildPersistedScopeSnapshot(
   if (scope.version !== undefined) {
     setSnapshotValue(persisted, VERSION_KEY, scope.version);
   }
-  return cloneSnapshot(persisted);
+  return cloneOpaqueSnapshot(persisted);
 }
 
 function snapshotWithValue(
@@ -1066,14 +1067,31 @@ function hasOwn(object: PreferenceSnapshot, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
-function cloneRawSnapshot(snapshot: Record<string, unknown>): {
+function cloneRawSnapshot(
+  snapshot: Record<string, unknown>,
+  leafPathSet: ReadonlySet<string>,
+): {
   readonly snapshot: PreferenceSnapshot;
   readonly diagnostics: readonly PreferenceDiagnostic[];
 } {
   const cloned: Record<string, unknown> = {};
   const diagnostics: PreferenceDiagnostic[] = [];
   for (const key of Object.keys(snapshot).sort()) {
-    const clone = tryCloneStoreSnapshotValue(snapshot[key]);
+    const value = snapshot[key];
+    if (value instanceof CorruptPreferenceSnapshotValue) {
+      diagnostics.push({
+        status: "invalid",
+        path: key,
+        reason: `Preference value could not be parsed from store. ${errorMessage(value.cause)}`,
+      });
+      setSnapshotValue(cloned, key, undefined);
+      continue;
+    }
+    if (!leafPathSet.has(key)) {
+      setSnapshotValue(cloned, key, value);
+      continue;
+    }
+    const clone = tryCloneStoreSnapshotValue(value);
     if (clone.ok) {
       setSnapshotValue(cloned, key, clone.value);
       continue;
@@ -1087,8 +1105,20 @@ function cloneRawSnapshot(snapshot: Record<string, unknown>): {
   return { snapshot: cloned, diagnostics };
 }
 
+function cloneOpaqueSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
+  const cloned: Record<string, unknown> = {};
+  for (const key of Object.keys(snapshot).sort()) {
+    setSnapshotValue(cloned, key, snapshot[key]);
+  }
+  return cloned;
+}
+
 function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
   return cloneStoreSnapshot(snapshot);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function storeErrorReason(
@@ -1096,7 +1126,7 @@ function storeErrorReason(
   phase: string,
   err: unknown,
 ): string {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   const scopeLabel =
     scope.diagnosticScope === undefined ? "" : ` scope '${scope.diagnosticScope}'`;
   return `Preference store '${scope.store.name}'${scopeLabel} failed during ${phase}. ${message}`;

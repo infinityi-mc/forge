@@ -1,11 +1,19 @@
 import type { PreferenceSnapshot } from "./types";
 
+export class CorruptPreferenceSnapshotValue {
+  constructor(
+    readonly key: string,
+    readonly cause: unknown,
+  ) {}
+}
+
 export function cloneStoreSnapshot(
   snapshot: PreferenceSnapshot,
 ): PreferenceSnapshot {
   const sorted: Record<string, unknown> = {};
   for (const key of Object.keys(snapshot).sort()) {
-    setSnapshotValue(sorted, key, structuredClone(snapshot[key]));
+    const clone = tryCloneStoreSnapshotValue(snapshot[key]);
+    setSnapshotValue(sorted, key, clone.ok ? clone.value : undefined);
   }
   return sorted;
 }

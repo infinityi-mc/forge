@@ -322,6 +322,28 @@ describe("definePreferences write path", () => {
     });
   });
 
+  test("preserves unknown non-cloneable snapshot keys across known-key writes", async () => {
+    const preserved = () => "future";
+    let persisted: PreferenceSnapshot = {
+      "appearance.theme": "dark",
+      "unknown.future": preserved,
+    };
+    const store: PreferenceStore = {
+      name: "opaque",
+      load: async () => persisted,
+      save: async (snapshot) => {
+        persisted = snapshot;
+      },
+    };
+    const prefs = await definePreferences(schema, { store });
+
+    await prefs.set("editor.autosave", false);
+
+    expect(prefs.values.appearance.theme).toBe("dark");
+    expect(persisted["unknown.future"]).toBe(preserved);
+    expect(persisted["editor.autosave"]).toBe(false);
+  });
+
   test("external non-object snapshots fall back safely", async () => {
     const diagnostics: PreferenceDiagnostic[] = [];
     const store = memoryStore({ "appearance.theme": "light" });
