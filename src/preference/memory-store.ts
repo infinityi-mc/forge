@@ -20,6 +20,8 @@ export function memoryStore(
   options: MemoryStoreOptions = {},
 ): MemoryPreferenceStore {
   let current = cloneSnapshot(initial);
+  let shutDown = false;
+  const handlers = new Set<(snapshot: PreferenceSnapshot) => void>();
   const name = options.name ?? "memory";
 
   return {
@@ -30,11 +32,34 @@ export function memoryStore(
     async save(snapshot: PreferenceSnapshot): Promise<void> {
       current = cloneSnapshot(snapshot);
     },
+    watch(handler): () => void {
+      if (shutDown) return () => {};
+      handlers.add(handler);
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        handlers.delete(handler);
+      };
+    },
+    async flush(): Promise<void> {},
+    async shutdown(): Promise<void> {
+      shutDown = true;
+      handlers.clear();
+    },
     snapshot(): PreferenceSnapshot {
       return cloneSnapshot(current);
     },
     replace(snapshot: PreferenceSnapshot): void {
       current = cloneSnapshot(snapshot);
+      if (shutDown) return;
+      for (const handler of [...handlers]) {
+        try {
+          handler(cloneSnapshot(current));
+        } catch {
+          // Store watchers are isolated so one bad consumer does not block others.
+        }
+      }
     },
   };
 }

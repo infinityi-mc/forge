@@ -10,6 +10,7 @@
 
 import { isLeaf, type Leaf, type LeafParseResult } from "../config/schema/types";
 import { collectLeaves, setAtPath } from "../config/schema/walk";
+import { Secret } from "../config/secret";
 import type { ConfigSchema } from "../config/types";
 import { PreferenceSchemaError } from "./errors";
 import type {
@@ -21,10 +22,19 @@ import type {
 
 export interface PreferenceValidationResult<S extends PreferenceSchema> {
   readonly tree: PreferenceValues<S>;
+  readonly explicit: PreferenceSnapshot;
   readonly diagnostics: readonly PreferenceDiagnostic[];
   readonly loadedKeys: readonly string[];
   readonly fallbackKeys: readonly string[];
 }
+
+export type PreferenceWriteValidationResult =
+  | {
+      readonly ok: true;
+      readonly value: unknown;
+      readonly snapshotValue: unknown;
+    }
+  | { readonly ok: false; readonly diagnostic: PreferenceDiagnostic };
 
 /** Runtime guard for JS callers and TS escape hatches. */
 export function assertPreferenceSchema(schema: PreferenceSchema): void {
@@ -39,6 +49,7 @@ export function validatePreferenceSnapshot<S extends PreferenceSchema>(
   const loadedKeys: string[] = [];
   const fallbackKeys: string[] = [];
   const tree: Record<string, unknown> = {};
+  const explicit: Record<string, unknown> = {};
   const leaves = collectLeaves(schema as unknown as ConfigSchema);
 
   for (const entry of leaves) {
@@ -52,6 +63,7 @@ export function validatePreferenceSnapshot<S extends PreferenceSchema>(
     const parsed = parsePreferenceValue(entry.leaf, raw);
     if (parsed.ok) {
       setAtPath(tree, entry.path, parsed.value);
+      explicit[entry.path] = snapshotValueForLeaf(entry.leaf, parsed.value);
       loadedKeys.push(entry.path);
       continue;
     }
@@ -69,9 +81,47 @@ export function validatePreferenceSnapshot<S extends PreferenceSchema>(
 
   return {
     tree: tree as PreferenceValues<S>,
+    explicit,
     diagnostics,
     loadedKeys,
     fallbackKeys,
+  };
+}
+
+export function validatePreferenceWriteValue(
+  path: string,
+  leaf: Leaf<unknown>,
+  value: unknown,
+): PreferenceWriteValidationResult {
+  if (value === undefined) {
+    return {
+      ok: false,
+      diagnostic: {
+        status: "invalid",
+        path,
+        reason:
+          "Preference values cannot be set to undefined; use reset(path) to clear an explicit value.",
+      },
+    };
+  }
+
+  const parsed = parsePreferenceValue(leaf, value);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      diagnostic: {
+        status: "invalid",
+        path,
+        reason: parsed.reason,
+        ...(leaf.isSecret ? {} : { received: value }),
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: parsed.value,
+    snapshotValue: snapshotValueForLeaf(leaf, parsed.value),
   };
 }
 
@@ -114,10 +164,11 @@ function parsePreferenceValue(
   switch (leaf.kind) {
     case "string":
     case "enum":
-    case "secret":
       return typeof raw === "string"
         ? leaf.parse(raw)
         : invalid(`Expected ${leaf.kind} preference value to be a string.`);
+    case "secret":
+      return parseSecretPreferenceValue(leaf, raw);
     case "number":
     case "port":
       return typeof raw === "number" || typeof raw === "string"
@@ -131,8 +182,9 @@ function parsePreferenceValue(
         : invalid("Expected boolean preference value to be a boolean.");
     case "json":
       return parseJsonPreferenceValue(leaf, raw);
-    case "url":
     case "url.secret":
+      return parseUrlSecretPreferenceValue(leaf, raw);
+    case "url":
       return typeof raw === "string" || raw instanceof URL
         ? leaf.parse(String(raw))
         : invalid("Expected URL preference value to be a string.");
@@ -140,6 +192,57 @@ function parsePreferenceValue(
       return typeof raw === "string"
         ? leaf.parse(raw)
         : invalid(`Expected ${leaf.kind} preference value to be a string.`);
+  }
+}
+
+function parseSecretPreferenceValue(
+  leaf: Leaf<unknown>,
+  raw: unknown,
+): LeafParseResult<unknown> {
+  if (raw instanceof Secret) {
+    const unwrapped = raw.unwrap();
+    return typeof unwrapped === "string"
+      ? leaf.parse(unwrapped)
+      : invalid("Expected secret preference value to wrap a string.");
+  }
+
+  return typeof raw === "string"
+    ? leaf.parse(raw)
+    : invalid("Expected secret preference value to be a string.");
+}
+
+function parseUrlSecretPreferenceValue(
+  leaf: Leaf<unknown>,
+  raw: unknown,
+): LeafParseResult<unknown> {
+  if (raw instanceof Secret) {
+    const unwrapped = raw.unwrap();
+    return typeof unwrapped === "string" || unwrapped instanceof URL
+      ? leaf.parse(String(unwrapped))
+      : invalid("Expected secret URL preference value to wrap a string or URL.");
+  }
+
+  return typeof raw === "string" || raw instanceof URL
+    ? leaf.parse(String(raw))
+    : invalid("Expected secret URL preference value to be a string or URL.");
+}
+
+function snapshotValueForLeaf(leaf: Leaf<unknown>, value: unknown): unknown {
+  switch (leaf.kind) {
+    case "json":
+      return structuredClone(value);
+    case "url":
+      return value instanceof URL ? value.toString() : String(value);
+    case "secret":
+      return value instanceof Secret ? value.unwrap() : value;
+    case "url.secret":
+      if (value instanceof Secret) {
+        const unwrapped = value.unwrap();
+        return unwrapped instanceof URL ? unwrapped.toString() : String(unwrapped);
+      }
+      return String(value);
+    default:
+      return value;
   }
 }
 
