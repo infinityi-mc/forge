@@ -49,6 +49,7 @@ export function jsonFileStore(
   let writeError: unknown;
   let lastExternalJson: string | undefined;
   let localWritesInFlight = 0;
+  let reloadSkippedDuringLocalWrite = false;
   let shutDown = false;
 
   const readSnapshot = async (): Promise<PreferenceSnapshot | undefined> => {
@@ -68,7 +69,7 @@ export function jsonFileStore(
       parsed = JSON.parse(text);
     } catch (cause) {
       const corruptPath = await quarantineCorruptFile(filePath);
-      throw new Error(
+      throw new CorruptPreferenceFileError(
         `Corrupt preference file '${filePath}' was moved aside to '${corruptPath}'.`,
         { cause },
       );
@@ -76,7 +77,7 @@ export function jsonFileStore(
 
     if (!isPlainRecord(parsed)) {
       const corruptPath = await quarantineCorruptFile(filePath);
-      throw new Error(
+      throw new CorruptPreferenceFileError(
         `Preference file '${filePath}' must contain a JSON object; moved aside to '${corruptPath}'.`,
       );
     }
@@ -93,6 +94,10 @@ export function jsonFileStore(
         writeError = undefined;
       } finally {
         localWritesInFlight -= 1;
+        if (localWritesInFlight === 0 && reloadSkippedDuringLocalWrite) {
+          reloadSkippedDuringLocalWrite = false;
+          scheduleReload();
+        }
       }
     });
     writeTail = run.catch((cause) => {
@@ -139,12 +144,16 @@ export function jsonFileStore(
 
   const reloadExternal = async (): Promise<void> => {
     if (shutDown) return;
-    if (localWritesInFlight > 0) return;
+    if (localWritesInFlight > 0) {
+      reloadSkippedDuringLocalWrite = true;
+      return;
+    }
     let snapshot: PreferenceSnapshot | undefined;
     try {
       snapshot = await readSnapshot();
-    } catch {
-      return;
+    } catch (cause) {
+      if (!(cause instanceof CorruptPreferenceFileError)) return;
+      snapshot = {};
     }
 
     const next = snapshot ?? {};
@@ -296,6 +305,13 @@ async function fsyncFileBestEffort(path: string): Promise<void> {
 function assertOpen(name: string, shutDown: boolean, phase: string): void {
   if (!shutDown) return;
   throw new Error(`Preference store '${name}' has been shut down during ${phase}.`);
+}
+
+class CorruptPreferenceFileError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CorruptPreferenceFileError";
+  }
 }
 
 function snapshotJson(snapshot: PreferenceSnapshot): string {

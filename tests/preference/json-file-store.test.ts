@@ -155,6 +155,34 @@ describe("jsonFileStore", () => {
     });
   });
 
+  test("opt-in watch falls back to defaults after corrupt external edits", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      await writeSnapshot(file, { "appearance.theme": "dark" });
+      const diagnostics: PreferenceDiagnostic[] = [];
+      const prefs = await definePreferences(schema, {
+        store: jsonFileStore({ path: file, watch: true, watchDebounceMs: 5 }),
+        onDiagnostic(diagnostic) {
+          diagnostics.push(diagnostic);
+        },
+      });
+      const changed: Array<readonly string[]> = [];
+      prefs.subscribe((_oldValues, _nextValues, changedKeys) => {
+        changed.push(changedKeys);
+      });
+
+      await writeRawFile(file, "{");
+      await waitFor(() => prefs.values.appearance.theme === "system");
+
+      expect(prefs.isSet("appearance.theme")).toBe(false);
+      expect(changed).toEqual([["appearance.theme"]]);
+      expect(diagnostics).toEqual([]);
+      expect(await Bun.file(`${file}.corrupt`).exists()).toBe(true);
+
+      await prefs.shutdown();
+    });
+  });
+
   test("opt-in watch ignores local saves and reports external writes", async () => {
     await withTempDir(async (dir) => {
       const file = join(dir, "prefs.json");
@@ -229,6 +257,13 @@ async function writeSnapshot(
   await mkdir(dirname(file), { recursive: true });
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
   await Bun.write(temporary, `${JSON.stringify(snapshot, null, 2)}\n`);
+  await rename(temporary, file);
+}
+
+async function writeRawFile(file: string, contents: string): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  await Bun.write(temporary, contents);
   await rename(temporary, file);
 }
 
