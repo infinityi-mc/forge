@@ -17,15 +17,28 @@ import { createSnapshotProxy, type SnapshotRef } from "../config/dynamic/proxy";
 import { isLeaf, type Leaf } from "../config/schema/types";
 import { collectLeaves, deepFreeze } from "../config/schema/walk";
 import type { ConfigSchema } from "../config/types";
-import { PreferenceStoreError, PreferenceValidationError } from "./errors";
+import {
+  PreferenceSchemaError,
+  PreferenceStoreError,
+  PreferenceValidationError,
+} from "./errors";
+import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
 import type {
+  DefinePreferencesBaseOptions,
   DefinePreferencesOptions,
+  DefinePreferencesScopedOptions,
+  DefinePreferencesStoreOptions,
   PreferenceChangeHandler,
   PreferenceDiagnostic,
+  PreferenceMigration,
   PreferencePath,
   PreferenceSchema,
   PreferenceSchemaNode,
+  PreferenceScopeName,
+  PreferenceScopeOptions,
+  PreferenceScopeStores,
   PreferenceSnapshot,
+  PreferenceStore,
   PreferencesHandle,
   PreferenceUpdate,
   PreferenceValues,
@@ -37,48 +50,133 @@ import {
   validatePreferenceWriteValue,
 } from "./validate";
 
+const VERSION_KEY = "$version";
+
 interface PatchEntry {
   readonly path: string;
   readonly leaf: Leaf<unknown>;
   readonly value: unknown;
 }
 
+interface VersioningOptions {
+  readonly currentVersion?: number;
+  readonly migrations: ReadonlyMap<number, PreferenceMigration>;
+}
+
+interface ScopeDefinition {
+  readonly name: string;
+  readonly diagnosticScope?: string;
+  readonly store: PreferenceStore;
+}
+
+interface ScopeState extends ScopeDefinition {
+  explicit: PreferenceSnapshot;
+  preserved: PreferenceSnapshot;
+  version: number | undefined;
+  unsubscribeExternal?: () => void;
+  unsubscribedFromExternal: boolean;
+}
+
+interface PreparedScopeSnapshot {
+  readonly explicit: PreferenceSnapshot;
+  readonly preserved: PreferenceSnapshot;
+  readonly version: number | undefined;
+  readonly diagnostics: readonly PreferenceDiagnostic[];
+}
+
+interface SplitSnapshot {
+  readonly known: PreferenceSnapshot;
+  readonly unknown: PreferenceSnapshot;
+}
+
 export async function definePreferences<S extends PreferenceSchema>(
   schema: S,
-  options: DefinePreferencesOptions,
-): Promise<PreferencesHandle<S>> {
+  options: DefinePreferencesStoreOptions,
+): Promise<PreferencesHandle<S>>;
+export async function definePreferences<
+  S extends PreferenceSchema,
+  Scopes extends PreferenceScopeStores,
+>(
+  schema: S,
+  options: DefinePreferencesScopedOptions<Scopes>,
+): Promise<PreferencesHandle<S, PreferenceScopeName<Scopes>>>;
+export async function definePreferences<
+  S extends PreferenceSchema,
+  Scopes extends PreferenceScopeStores,
+>(
+  schema: S,
+  options: DefinePreferencesOptions<Scopes>,
+): Promise<PreferencesHandle<S, PreferenceScopeName<Scopes>>> {
   assertPreferenceSchema(schema);
 
   const diagnostics: PreferenceDiagnostic[] = [];
   const leafEntries = collectLeaves(schema as unknown as ConfigSchema);
   const leafPaths = leafEntries.map((entry) => entry.path);
+  assertNoReservedPreferencePath(leafPaths);
+
+  const leafPathSet = new Set(leafPaths);
   const leafMap = new Map(
     leafEntries.map((entry) => [entry.path, entry.leaf]),
   );
-  let explicit: PreferenceSnapshot | undefined;
+  const versioning = normalizeVersioning(options);
+  const scopeStates = normalizeScopes(options).map(
+    (definition): ScopeState => ({
+      ...definition,
+      explicit: {},
+      preserved: {},
+      version: versioning.currentVersion,
+      unsubscribedFromExternal: false,
+    }),
+  );
+  const scopeMap = new Map(
+    scopeStates
+      .filter((scope) => scope.diagnosticScope !== undefined)
+      .map((scope) => [scope.diagnosticScope!, scope]),
+  );
+  const defaultWriteScope = scopeStates.at(-1)!;
 
-  try {
-    explicit = await options.store.load();
-  } catch (err) {
-    diagnostics.push({
-      status: "store_error",
-      store: options.store.name,
-      reason: storeErrorReason(options.store.name, "load", err),
-    });
+  for (const scope of scopeStates) {
+    let loaded: PreferenceSnapshot | undefined;
+    try {
+      loaded = await scope.store.load();
+    } catch (err) {
+      diagnostics.push(
+        scopeDiagnostic(scope, {
+          status: "store_error",
+          store: scope.store.name,
+          reason: storeErrorReason(scope, "load", err),
+        }),
+      );
+      continue;
+    }
+
+    if (loaded === undefined) continue;
+    const prepared = await prepareScopeSnapshot(
+      schema,
+      leafPathSet,
+      scope,
+      loaded,
+      versioning,
+    );
+    scope.explicit = cloneSnapshot(prepared.explicit);
+    scope.preserved = cloneSnapshot(prepared.preserved);
+    scope.version = prepared.version;
+    diagnostics.push(...prepared.diagnostics);
   }
 
-  const initial = validatePreferenceSnapshot(schema, explicit ?? {});
+  const initial = validatePreferenceSnapshot(
+    schema,
+    mergeScopeExplicitSnapshots(scopeStates),
+  );
   diagnostics.push(...initial.diagnostics);
 
   await emitDiagnostics(diagnostics, options.onDiagnostic);
 
-  let currentExplicit = cloneSnapshot(initial.explicit);
+  let currentEffectiveExplicit = cloneSnapshot(initial.explicit);
   const ref: SnapshotRef<PreferenceValues<S>> = {
     current: deepFreeze(initial.tree),
   };
   const subscribers = new Set<PreferenceChangeHandler<S>>();
-  let unsubscribedFromExternal = false;
-  let unsubscribeExternal: (() => void) | undefined;
   let shutDown = false;
   let writeQueue: Promise<void> = Promise.resolve();
 
@@ -93,13 +191,16 @@ export async function definePreferences<S extends PreferenceSchema>(
     void emitDiagnostics(nextDiagnostics, options.onDiagnostic);
   };
 
-  const applyValidatedSnapshot = (
-    nextExplicit: PreferenceSnapshot,
-    nextTree: PreferenceValues<S>,
-  ): void => {
-    currentExplicit = cloneSnapshot(nextExplicit);
+  const applyMergedScopes = (): void => {
+    const result = validatePreferenceSnapshot(
+      schema,
+      mergeScopeExplicitSnapshots(scopeStates),
+    );
+    addDiagnostics(result.diagnostics);
+    currentEffectiveExplicit = cloneSnapshot(result.explicit);
+
     const previous = ref.current;
-    const nextValues = deepFreeze(nextTree);
+    const nextValues = deepFreeze(result.tree);
     const changedKeys = changedPreferenceKeys(
       leafPaths,
       previous,
@@ -119,25 +220,40 @@ export async function definePreferences<S extends PreferenceSchema>(
     return run;
   };
 
-  const applyExternalSnapshot = (snapshot: PreferenceSnapshot): void => {
-    void enqueueStateChange(() => {
+  const applyExternalSnapshot = (
+    scope: ScopeState,
+    snapshot: PreferenceSnapshot,
+  ): void => {
+    void enqueueStateChange(async () => {
       if (shutDown) return;
-      const result = validatePreferenceSnapshot(schema, snapshot);
-      addDiagnostics(result.diagnostics);
-      applyValidatedSnapshot(result.explicit, result.tree);
+      const prepared = await prepareScopeSnapshot(
+        schema,
+        leafPathSet,
+        scope,
+        snapshot,
+        versioning,
+      );
+      scope.explicit = cloneSnapshot(prepared.explicit);
+      scope.preserved = cloneSnapshot(prepared.preserved);
+      scope.version = prepared.version;
+      addDiagnostics(prepared.diagnostics);
+      applyMergedScopes();
     });
   };
 
-  if (options.store.watch !== undefined) {
+  for (const scope of scopeStates) {
+    if (scope.store.watch === undefined) continue;
     try {
-      unsubscribeExternal = options.store.watch(applyExternalSnapshot);
+      scope.unsubscribeExternal = scope.store.watch((snapshot) => {
+        applyExternalSnapshot(scope, snapshot);
+      });
     } catch (err) {
       addDiagnostics([
-        {
+        scopeDiagnostic(scope, {
           status: "store_error",
-          store: options.store.name,
-          reason: storeErrorReason(options.store.name, "watch", err),
-        },
+          store: scope.store.name,
+          reason: storeErrorReason(scope, "watch", err),
+        }),
       ]);
     }
   }
@@ -148,7 +264,18 @@ export async function definePreferences<S extends PreferenceSchema>(
     throw validationError(path, "Unknown preference path.");
   };
 
-  const commitExplicit = async (
+  const resolveTargetScope = (
+    scopeOptions?: PreferenceScopeOptions<PreferenceScopeName<Scopes>>,
+  ): ScopeState => {
+    const requested = scopeOptions?.scope;
+    if (requested === undefined) return defaultWriteScope;
+    const scope = scopeMap.get(requested);
+    if (scope !== undefined) return scope;
+    throw scopeValidationError(String(requested));
+  };
+
+  const commitScopeExplicit = async (
+    scope: ScopeState,
     nextExplicit: PreferenceSnapshot,
   ): Promise<void> => {
     const result = validatePreferenceSnapshot(schema, nextExplicit);
@@ -160,30 +287,32 @@ export async function definePreferences<S extends PreferenceSchema>(
     }
 
     try {
-      await options.store.save(result.explicit);
+      await scope.store.save(buildPersistedScopeSnapshot(scope, result.explicit));
     } catch (err) {
-      throw new PreferenceStoreError(
-        storeErrorReason(options.store.name, "save", err),
-        { cause: err, store: options.store.name },
-      );
+      throw new PreferenceStoreError(storeErrorReason(scope, "save", err), {
+        cause: err,
+        store: scope.store.name,
+      });
     }
 
-    applyValidatedSnapshot(result.explicit, result.tree);
+    scope.explicit = cloneSnapshot(result.explicit);
+    applyMergedScopes();
   };
 
   const assertOpen = (): void => {
     if (!shutDown) return;
-    throw new PreferenceStoreError(
-      `Preference store '${options.store.name}' has been shut down.`,
-      { store: options.store.name },
-    );
+    throw new PreferenceStoreError("Preferences have been shut down.", {
+      store: defaultWriteScope.store.name,
+    });
   };
 
   const set = async <P extends PreferencePath<S>>(
     path: P,
     value: PreferenceWritableValue<S, P>,
+    scopeOptions?: PreferenceScopeOptions<PreferenceScopeName<Scopes>>,
   ): Promise<void> => {
     assertOpen();
+    const target = resolveTargetScope(scopeOptions);
     const leaf = requireLeaf(path);
     const validated = validatePreferenceWriteValue(path, leaf, value);
     if (!validated.ok) {
@@ -194,11 +323,12 @@ export async function definePreferences<S extends PreferenceSchema>(
     }
 
     await enqueueStateChange(async () => {
-      const nextExplicit: Record<string, unknown> = {
-        ...cloneSnapshot(currentExplicit),
-      };
-      nextExplicit[path] = validated.snapshotValue;
-      await commitExplicit(nextExplicit);
+      const nextExplicit = snapshotWithValue(
+        target.explicit,
+        path,
+        validated.snapshotValue,
+      );
+      await commitScopeExplicit(target, nextExplicit);
     });
   };
 
@@ -208,6 +338,7 @@ export async function definePreferences<S extends PreferenceSchema>(
     ) => PreferenceUpdate<S> | void | Promise<PreferenceUpdate<S> | void>,
   ): Promise<void> => {
     assertOpen();
+    const target = defaultWriteScope;
     await enqueueStateChange(async () => {
       const patch = await updater(ref.current);
       if (patch === undefined) return;
@@ -216,7 +347,8 @@ export async function definePreferences<S extends PreferenceSchema>(
       flattenPreferencePatch(schema, patch, "", entries);
       if (entries.length === 0) return;
 
-      const validated = entries.map((entry) => {
+      let nextExplicit = cloneSnapshot(target.explicit);
+      for (const entry of entries) {
         const result = validatePreferenceWriteValue(
           entry.path,
           entry.leaf,
@@ -228,43 +360,48 @@ export async function definePreferences<S extends PreferenceSchema>(
             { diagnostics: [result.diagnostic] },
           );
         }
-        return { path: entry.path, snapshotValue: result.snapshotValue };
-      });
-
-      const nextExplicit: Record<string, unknown> = {
-        ...cloneSnapshot(currentExplicit),
-      };
-      for (const entry of validated) {
-        nextExplicit[entry.path] = entry.snapshotValue;
+        nextExplicit = snapshotWithValue(
+          nextExplicit,
+          entry.path,
+          result.snapshotValue,
+        );
       }
-      await commitExplicit(nextExplicit);
+      await commitScopeExplicit(target, nextExplicit);
     });
   };
 
-  const reset = async <P extends PreferencePath<S>>(path: P): Promise<void> => {
+  const reset = async <P extends PreferencePath<S>>(
+    path: P,
+    scopeOptions?: PreferenceScopeOptions<PreferenceScopeName<Scopes>>,
+  ): Promise<void> => {
     assertOpen();
+    const target = resolveTargetScope(scopeOptions);
     requireLeaf(path);
     await enqueueStateChange(async () => {
-      if (!hasOwn(currentExplicit, path)) return;
-
-      const nextExplicit: Record<string, unknown> = {
-        ...cloneSnapshot(currentExplicit),
-      };
-      delete nextExplicit[path];
-      await commitExplicit(nextExplicit);
+      if (!hasOwn(target.explicit, path)) return;
+      await commitScopeExplicit(target, snapshotWithoutKey(target.explicit, path));
     });
   };
 
-  const resetAll = async (): Promise<void> => {
+  const resetAll = async (
+    scopeOptions?: PreferenceScopeOptions<PreferenceScopeName<Scopes>>,
+  ): Promise<void> => {
     assertOpen();
+    const target = resolveTargetScope(scopeOptions);
     await enqueueStateChange(async () => {
-      await commitExplicit({});
+      await commitScopeExplicit(target, {});
     });
   };
 
-  const isSet = <P extends PreferencePath<S>>(path: P): boolean => {
+  const isSet = <P extends PreferencePath<S>>(
+    path: P,
+    scopeOptions?: PreferenceScopeOptions<PreferenceScopeName<Scopes>>,
+  ): boolean => {
     requireLeaf(path);
-    return hasOwn(currentExplicit, path);
+    if (scopeOptions?.scope !== undefined) {
+      return hasOwn(resolveTargetScope(scopeOptions).explicit, path);
+    }
+    return hasOwn(currentEffectiveExplicit, path);
   };
 
   const subscribe = (handler: PreferenceChangeHandler<S>): (() => void) => {
@@ -280,15 +417,19 @@ export async function definePreferences<S extends PreferenceSchema>(
 
   const flush = async (): Promise<void> => {
     await writeQueue;
-    if (options.store.flush === undefined) return;
-    try {
-      await options.store.flush();
-    } catch (err) {
-      throw new PreferenceStoreError(
-        storeErrorReason(options.store.name, "flush", err),
-        { cause: err, store: options.store.name },
-      );
+    let firstError: unknown;
+    for (const scope of scopeStates) {
+      if (scope.store.flush === undefined) continue;
+      try {
+        await scope.store.flush();
+      } catch (err) {
+        firstError ??= new PreferenceStoreError(
+          storeErrorReason(scope, "flush", err),
+          { cause: err, store: scope.store.name },
+        );
+      }
     }
+    if (firstError !== undefined) throw firstError;
   };
 
   const shutdown = async (): Promise<void> => {
@@ -297,14 +438,20 @@ export async function definePreferences<S extends PreferenceSchema>(
     subscribers.clear();
 
     let firstError: unknown;
-    if (!unsubscribedFromExternal && unsubscribeExternal !== undefined) {
-      unsubscribedFromExternal = true;
+    for (const scope of scopeStates) {
+      if (
+        scope.unsubscribedFromExternal ||
+        scope.unsubscribeExternal === undefined
+      ) {
+        continue;
+      }
+      scope.unsubscribedFromExternal = true;
       try {
-        unsubscribeExternal();
+        scope.unsubscribeExternal();
       } catch (err) {
-        firstError = new PreferenceStoreError(
-          storeErrorReason(options.store.name, "unwatch", err),
-          { cause: err, store: options.store.name },
+        firstError ??= new PreferenceStoreError(
+          storeErrorReason(scope, "unwatch", err),
+          { cause: err, store: scope.store.name },
         );
       }
     }
@@ -315,13 +462,14 @@ export async function definePreferences<S extends PreferenceSchema>(
       firstError ??= err;
     }
 
-    if (options.store.shutdown !== undefined) {
+    for (const scope of scopeStates) {
+      if (scope.store.shutdown === undefined) continue;
       try {
-        await options.store.shutdown();
+        await scope.store.shutdown();
       } catch (err) {
         firstError ??= new PreferenceStoreError(
-          storeErrorReason(options.store.name, "shutdown", err),
-          { cause: err, store: options.store.name },
+          storeErrorReason(scope, "shutdown", err),
+          { cause: err, store: scope.store.name },
         );
       }
     }
@@ -344,9 +492,56 @@ export async function definePreferences<S extends PreferenceSchema>(
   };
 }
 
+async function prepareScopeSnapshot<S extends PreferenceSchema>(
+  schema: S,
+  leafPathSet: ReadonlySet<string>,
+  scope: ScopeDefinition,
+  snapshot: PreferenceSnapshot,
+  versioning: VersioningOptions,
+): Promise<PreparedScopeSnapshot> {
+  const cloned = cloneSnapshot(snapshot);
+  const versionResult = readSnapshotVersion(cloned, versioning.currentVersion);
+  const withoutVersion = snapshotWithoutKey(cloned, VERSION_KEY);
+  if (!versionResult.ok) {
+    return migrationFallback(scope, leafPathSet, withoutVersion, {
+      ...versionResult.diagnostic,
+      version: versioning.currentVersion,
+    });
+  }
+
+  let migrated: PreferenceSnapshot;
+  let version = versionResult.version;
+  try {
+    const migrationResult = await runMigrations(
+      withoutVersion,
+      version,
+      versioning,
+    );
+    migrated = migrationResult.snapshot;
+    version = migrationResult.version;
+  } catch (err) {
+    return migrationFallback(scope, leafPathSet, withoutVersion, {
+      status: "migration_error",
+      reason: migrationErrorReason(scope, err),
+      version: versioning.currentVersion ?? version,
+    });
+  }
+
+  const split = splitSnapshot(migrated, leafPathSet);
+  const validated = validatePreferenceSnapshot(schema, split.known);
+  return {
+    explicit: cloneSnapshot(validated.explicit),
+    preserved: cloneSnapshot(split.unknown),
+    version,
+    diagnostics: validated.diagnostics.map((diagnostic) =>
+      scopeDiagnostic(scope, diagnostic),
+    ),
+  };
+}
+
 async function emitDiagnostics(
   diagnostics: readonly PreferenceDiagnostic[],
-  handler: DefinePreferencesOptions["onDiagnostic"],
+  handler: DefinePreferencesBaseOptions["onDiagnostic"],
 ): Promise<void> {
   if (handler === undefined) return;
   for (const diagnostic of diagnostics) {
@@ -356,6 +551,230 @@ async function emitDiagnostics(
       // Diagnostics must not turn fail-safe preference reads into failures.
     }
   }
+}
+
+function normalizeScopes(
+  options: DefinePreferencesOptions<PreferenceScopeStores>,
+): readonly ScopeDefinition[] {
+  const hasStore = "store" in options && options.store !== undefined;
+  const hasScopes = "scopes" in options && options.scopes !== undefined;
+  if (hasStore && hasScopes) {
+    throw new PreferenceSchemaError(
+      "definePreferences accepts either store or scopes, not both.",
+    );
+  }
+  if (hasStore) {
+    return [{ name: "default", store: options.store }];
+  }
+  if (!hasScopes) {
+    throw new PreferenceSchemaError(
+      "definePreferences requires a store or at least one scope.",
+    );
+  }
+
+  const entries = Object.entries(options.scopes);
+  if (entries.length === 0) {
+    throw new PreferenceSchemaError(
+      "definePreferences scopes must include at least one store.",
+    );
+  }
+
+  return entries.map(([name, store]) => {
+    if (name.length === 0) {
+      throw new PreferenceSchemaError("Preference scope names must be non-empty.");
+    }
+    return { name, diagnosticScope: name, store };
+  });
+}
+
+function normalizeVersioning(
+  options: DefinePreferencesBaseOptions,
+): VersioningOptions {
+  if (options.version !== undefined) {
+    assertVersionNumber(options.version, "Preference version");
+  }
+  if (options.version === undefined && options.migrations !== undefined) {
+    throw new PreferenceSchemaError(
+      "Preference migrations require a current version.",
+    );
+  }
+
+  const migrations = new Map<number, PreferenceMigration>();
+  for (const [rawVersion, migration] of Object.entries(
+    options.migrations ?? {},
+  )) {
+    const version = Number(rawVersion);
+    assertVersionNumber(version, `Preference migration '${rawVersion}'`);
+    migrations.set(version, migration);
+  }
+
+  return { currentVersion: options.version, migrations };
+}
+
+function assertVersionNumber(version: number, label: string): void {
+  if (Number.isSafeInteger(version) && version >= 1) return;
+  throw new PreferenceSchemaError(`${label} must be a positive safe integer.`);
+}
+
+function assertNoReservedPreferencePath(leafPaths: readonly string[]): void {
+  if (!leafPaths.includes(VERSION_KEY)) return;
+  throw new PreferenceSchemaError(
+    `Preference path '${VERSION_KEY}' is reserved for persisted version metadata.`,
+    { path: VERSION_KEY },
+  );
+}
+
+function readSnapshotVersion(
+  snapshot: PreferenceSnapshot,
+  currentVersion: number | undefined,
+):
+  | { readonly ok: true; readonly version: number | undefined }
+  | { readonly ok: false; readonly diagnostic: PreferenceDiagnostic } {
+  if (!hasOwn(snapshot, VERSION_KEY)) {
+    return { ok: true, version: currentVersion === undefined ? undefined : 1 };
+  }
+
+  const raw = snapshot[VERSION_KEY];
+  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
+    return { ok: true, version: raw };
+  }
+
+  return {
+    ok: false,
+    diagnostic: {
+      status: "migration_error",
+      path: VERSION_KEY,
+      reason: "Preference snapshot version must be a positive safe integer.",
+      received: raw,
+    },
+  };
+}
+
+async function runMigrations(
+  snapshot: PreferenceSnapshot,
+  storedVersion: number | undefined,
+  versioning: VersioningOptions,
+): Promise<{ readonly snapshot: PreferenceSnapshot; readonly version: number | undefined }> {
+  const currentVersion = versioning.currentVersion;
+  if (currentVersion === undefined) {
+    return { snapshot: cloneSnapshot(snapshot), version: storedVersion };
+  }
+  if (storedVersion !== undefined && storedVersion > currentVersion) {
+    return { snapshot: cloneSnapshot(snapshot), version: storedVersion };
+  }
+
+  let next = cloneSnapshot(snapshot);
+  const fromVersion = storedVersion ?? 1;
+  for (let version = fromVersion + 1; version <= currentVersion; version += 1) {
+    const migration = versioning.migrations.get(version);
+    if (migration === undefined) continue;
+    const migrated = await migration(cloneSnapshot(next));
+    if (!isPlainRecord(migrated)) {
+      throw new Error(
+        `Migration ${version} must return a flat preference snapshot object.`,
+      );
+    }
+    next = snapshotWithoutKey(cloneSnapshot(migrated), VERSION_KEY);
+  }
+  return { snapshot: next, version: currentVersion };
+}
+
+function migrationFallback(
+  scope: ScopeDefinition,
+  leafPathSet: ReadonlySet<string>,
+  snapshot: PreferenceSnapshot,
+  diagnostic: PreferenceDiagnostic,
+): PreparedScopeSnapshot {
+  return {
+    explicit: {},
+    preserved: splitSnapshot(snapshot, leafPathSet).unknown,
+    version: diagnostic.version,
+    diagnostics: [scopeDiagnostic(scope, diagnostic)],
+  };
+}
+
+function migrationErrorReason(scope: ScopeDefinition, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return `Preference store '${scope.store.name}' failed to migrate preferences. ${message}`;
+}
+
+function splitSnapshot(
+  snapshot: PreferenceSnapshot,
+  leafPathSet: ReadonlySet<string>,
+): SplitSnapshot {
+  const known: Record<string, unknown> = {};
+  const unknown: Record<string, unknown> = {};
+  for (const key of Object.keys(snapshot)) {
+    if (key === VERSION_KEY) continue;
+    const target = leafPathSet.has(key) ? known : unknown;
+    setSnapshotValue(target, key, snapshot[key]);
+  }
+  return { known, unknown };
+}
+
+function mergeScopeExplicitSnapshots(
+  scopes: readonly ScopeState[],
+): PreferenceSnapshot {
+  const merged: Record<string, unknown> = {};
+  for (const scope of scopes) {
+    copySnapshotValues(merged, scope.explicit);
+  }
+  return cloneSnapshot(merged);
+}
+
+function buildPersistedScopeSnapshot(
+  scope: ScopeState,
+  explicit: PreferenceSnapshot,
+): PreferenceSnapshot {
+  const persisted: Record<string, unknown> = {};
+  copySnapshotValues(persisted, scope.preserved);
+  copySnapshotValues(persisted, explicit);
+  if (scope.version !== undefined) {
+    setSnapshotValue(persisted, VERSION_KEY, scope.version);
+  }
+  return cloneSnapshot(persisted);
+}
+
+function snapshotWithValue(
+  snapshot: PreferenceSnapshot,
+  key: string,
+  value: unknown,
+): PreferenceSnapshot {
+  const next = cloneSnapshot(snapshot) as Record<string, unknown>;
+  setSnapshotValue(next, key, value);
+  return next;
+}
+
+function snapshotWithoutKey(
+  snapshot: PreferenceSnapshot,
+  key: string,
+): PreferenceSnapshot {
+  const next: Record<string, unknown> = {};
+  for (const existing of Object.keys(snapshot)) {
+    if (existing === key) continue;
+    setSnapshotValue(next, existing, snapshot[existing]);
+  }
+  return next;
+}
+
+function copySnapshotValues(
+  target: Record<string, unknown>,
+  source: PreferenceSnapshot,
+): void {
+  for (const key of Object.keys(source)) {
+    setSnapshotValue(target, key, source[key]);
+  }
+}
+
+function scopeDiagnostic(
+  scope: ScopeDefinition,
+  diagnostic: PreferenceDiagnostic,
+): PreferenceDiagnostic {
+  return {
+    ...diagnostic,
+    store: diagnostic.store ?? scope.store.name,
+    ...(scope.diagnosticScope === undefined ? {} : { scope: scope.diagnosticScope }),
+  };
 }
 
 function flattenPreferencePatch(
@@ -444,17 +863,35 @@ function validationError(path: string, reason: string): PreferenceValidationErro
   );
 }
 
+function scopeValidationError(scope: string): PreferenceValidationError {
+  return new PreferenceValidationError(`Unknown preference scope '${scope}'.`, {
+    diagnostics: [
+      {
+        status: "invalid",
+        scope,
+        reason: "Unknown preference scope.",
+      },
+    ],
+  });
+}
+
 function hasOwn(object: PreferenceSnapshot, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
-  return structuredClone(snapshot) as PreferenceSnapshot;
+  return cloneStoreSnapshot(snapshot);
 }
 
-function storeErrorReason(store: string, phase: string, err: unknown): string {
+function storeErrorReason(
+  scope: ScopeDefinition,
+  phase: string,
+  err: unknown,
+): string {
   const message = err instanceof Error ? err.message : String(err);
-  return `Preference store '${store}' failed during ${phase}. ${message}`;
+  const scopeLabel =
+    scope.diagnosticScope === undefined ? "" : ` scope '${scope.diagnosticScope}'`;
+  return `Preference store '${scope.store.name}'${scopeLabel} failed during ${phase}. ${message}`;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

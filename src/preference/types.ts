@@ -84,6 +84,19 @@ export type PreferenceUpdate<S> = S extends PreferenceLeaf
 /** Snapshot keyed by dotted schema path, containing explicit user values only. */
 export type PreferenceSnapshot = Readonly<Record<string, unknown>>;
 
+/** Migration hook for raw persisted snapshots, keyed by target version. */
+export type PreferenceMigration = (
+  snapshot: PreferenceSnapshot,
+) => PreferenceSnapshot | Promise<PreferenceSnapshot>;
+
+/** Ordered scope map. Object insertion order defines precedence; later wins. */
+export type PreferenceScopeStores = Readonly<Record<string, PreferenceStore>>;
+
+export type PreferenceScopeName<Scopes extends PreferenceScopeStores> = Extract<
+  keyof Scopes,
+  string
+>;
+
 /** Callback fired by stores that can observe external preference changes. */
 export type PreferenceSnapshotHandler = (snapshot: PreferenceSnapshot) => void;
 
@@ -97,22 +110,51 @@ export interface PreferenceStore {
   shutdown?(): Promise<void>;
 }
 
-export type PreferenceDiagnosticStatus = "invalid" | "store_error";
+export type PreferenceDiagnosticStatus =
+  | "invalid"
+  | "migration_error"
+  | "store_error";
 
 /** Non-fatal diagnostic emitted when preferences fall back safely. */
 export interface PreferenceDiagnostic {
   readonly status: PreferenceDiagnosticStatus;
   readonly reason: string;
   readonly path?: string;
+  readonly scope?: string;
   readonly store?: string;
+  readonly version?: number;
   readonly received?: unknown;
 }
 
-export interface DefinePreferencesOptions {
-  readonly store: PreferenceStore;
+export interface DefinePreferencesBaseOptions {
+  /** Current application preference schema version. Enables persisted `$version`. */
+  readonly version?: number;
+  /** Ordered migrations keyed by target version. */
+  readonly migrations?: Readonly<Record<number, PreferenceMigration>>;
   readonly onDiagnostic?: (
     diagnostic: PreferenceDiagnostic,
   ) => void | Promise<void>;
+}
+
+export interface DefinePreferencesStoreOptions
+  extends DefinePreferencesBaseOptions {
+  readonly store: PreferenceStore;
+  readonly scopes?: never;
+}
+
+export interface DefinePreferencesScopedOptions<
+  Scopes extends PreferenceScopeStores = PreferenceScopeStores,
+> extends DefinePreferencesBaseOptions {
+  readonly scopes: Scopes;
+  readonly store?: never;
+}
+
+export type DefinePreferencesOptions<
+  Scopes extends PreferenceScopeStores = PreferenceScopeStores,
+> = DefinePreferencesStoreOptions | DefinePreferencesScopedOptions<Scopes>;
+
+export interface PreferenceScopeOptions<Scope extends string = never> {
+  readonly scope?: Scope;
 }
 
 export type PreferenceChangeHandler<S extends PreferenceSchema> = (
@@ -121,7 +163,10 @@ export type PreferenceChangeHandler<S extends PreferenceSchema> = (
   changedKeys: readonly PreferencePath<S>[],
 ) => void;
 
-export interface PreferencesHandle<S extends PreferenceSchema> {
+export interface PreferencesHandle<
+  S extends PreferenceSchema,
+  Scope extends string = never,
+> {
   /** Live proxy view of the latest validated and deeply-frozen preference tree. */
   readonly values: PreferenceValues<S>;
   /** Diagnostics produced while loading the current snapshot. */
@@ -130,6 +175,7 @@ export interface PreferencesHandle<S extends PreferenceSchema> {
   set<P extends PreferencePath<S>>(
     path: P,
     value: PreferenceWritableValue<S, P>,
+    options?: PreferenceScopeOptions<Scope>,
   ): Promise<void>;
   /** Atomically apply a nested partial patch derived from the current values. */
   update(
@@ -138,11 +184,17 @@ export interface PreferencesHandle<S extends PreferenceSchema> {
     ) => PreferenceUpdate<S> | void | Promise<PreferenceUpdate<S> | void>,
   ): Promise<void>;
   /** Delete an explicit value so the default or optional fallback shows through. */
-  reset<P extends PreferencePath<S>>(path: P): Promise<void>;
+  reset<P extends PreferencePath<S>>(
+    path: P,
+    options?: PreferenceScopeOptions<Scope>,
+  ): Promise<void>;
   /** Delete every explicit value. */
-  resetAll(): Promise<void>;
+  resetAll(options?: PreferenceScopeOptions<Scope>): Promise<void>;
   /** Whether a path has an explicit persisted value. */
-  isSet<P extends PreferencePath<S>>(path: P): boolean;
+  isSet<P extends PreferencePath<S>>(
+    path: P,
+    options?: PreferenceScopeOptions<Scope>,
+  ): boolean;
   /** Subscribe to effective value changes. */
   subscribe(handler: PreferenceChangeHandler<S>): () => void;
   /** Drain pending store work when the store supports it. */

@@ -318,6 +318,7 @@ describe("definePreferences write path", () => {
     expect(store.snapshot()).toEqual({
       "appearance.theme": "dark",
       "editor.autosave": false,
+      "unknown.future": true,
     });
   });
 

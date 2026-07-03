@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  definePreferences,
+  memoryStore,
   t,
   type PreferencePath,
   type PreferencePathValue,
@@ -82,6 +84,23 @@ async function writePathTypeChecks(
   await prefs.set("editor.workspaceName", undefined);
 }
 
+async function scopedWriteTypeChecks(): Promise<void> {
+  const prefs = await definePreferences(nestedPreferenceSchema, {
+    scopes: {
+      user: memoryStore(),
+      workspace: memoryStore(),
+    },
+  });
+
+  await prefs.set("appearance.theme", "dark", { scope: "workspace" });
+  await prefs.reset("appearance.theme", { scope: "user" });
+  prefs.isSet("appearance.theme", { scope: "workspace" });
+  // @ts-expect-error scope must be one of the configured scope names.
+  await prefs.set("appearance.theme", "dark", { scope: "machine" });
+  // @ts-expect-error scope must be one of the configured scope names.
+  prefs.isSet("appearance.theme", { scope: "machine" });
+}
+
 void invalidPreferenceSchema;
 void requiredAfterOptionalSchema;
 void validPath;
@@ -93,6 +112,7 @@ void validUpdate;
 void invalidUpdate;
 void invalidUndefinedUpdate;
 void writePathTypeChecks;
+void scopedWriteTypeChecks;
 
 describe("preference type surface", () => {
   test("valid schema examples still run at runtime", () => {
