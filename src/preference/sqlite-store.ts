@@ -9,6 +9,7 @@
 
 import { Database } from "bun:sqlite";
 import { PreferenceStoreError } from "./errors";
+import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
 import type { PreferenceSnapshot, PreferenceStore } from "./types";
 
 export interface SqliteStoreOptions {
@@ -77,13 +78,13 @@ export function sqliteStore(
 
       const snapshot: Record<string, unknown> = {};
       for (const row of rows) {
-        snapshot[row.key] = JSON.parse(row.value) as unknown;
+        setSnapshotValue(snapshot, row.key, JSON.parse(row.value) as unknown);
       }
       return snapshot;
     },
     async save(snapshot): Promise<void> {
       assertOpen(name, shutDown, "save");
-      const entries = Object.entries(cloneSnapshot(snapshot)).map(
+      const entries = Object.entries(cloneStoreSnapshot(snapshot)).map(
         ([key, value]) => [key, encodeValue(key, value)] as const,
       );
       replaceSnapshot(entries);
@@ -103,13 +104,6 @@ function encodeValue(key: string, value: unknown): string {
     throw new Error(`Preference value for '${key}' is not JSON-serializable.`);
   }
   return encoded;
-}
-
-function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
-  const cloned = structuredClone(snapshot) as Record<string, unknown>;
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(cloned).sort()) sorted[key] = cloned[key];
-  return sorted;
 }
 
 function assertOpen(name: string, shutDown: boolean, phase: string): void {

@@ -3,7 +3,9 @@
  *
  * Store authors can run this suite against a custom `PreferenceStore` to verify
  * the persistence, lifecycle, and optional watch contract expected by
- * `definePreferences`.
+ * `definePreferences`. Concurrent save scenarios enforce last-call-wins by
+ * invocation order: after overlapping `save(A)`, `save(B)`, `flush()`, `load()`
+ * must return B even if the underlying I/O for A settles later.
  *
  * @module
  */
@@ -152,9 +154,12 @@ export const STANDARD_PREFERENCE_STORE_SCENARIOS: readonly PreferenceStoreConfor
       name: "shutdown is idempotent",
       async run(factory) {
         const { store } = await factory();
-        await store.save({ "shutdown.value": true });
-        await store.shutdown?.();
-        await store.shutdown?.();
+        try {
+          await store.save({ "shutdown.value": true });
+        } finally {
+          await store.shutdown?.();
+          await store.shutdown?.();
+        }
       },
     },
     {

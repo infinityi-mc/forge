@@ -16,6 +16,7 @@ import type {
   PreferenceSnapshotHandler,
   PreferenceStore,
 } from "./types";
+import { cloneStoreSnapshot } from "./store-snapshot";
 
 export interface JsonFileStoreOptions {
   /** JSON file path used for persistence. */
@@ -79,12 +80,13 @@ export function jsonFileStore(
       );
     }
 
-    return cloneSnapshot(parsed);
+    return cloneStoreSnapshot(parsed);
   };
 
   const enqueueWrite = (snapshot: PreferenceSnapshot): Promise<void> => {
     const run = writeTail.then(async () => {
       await atomicWriteSnapshot(filePath, snapshot);
+      lastExternalJson = snapshotJson(snapshot);
       writeError = undefined;
     });
     writeTail = run.catch((cause) => {
@@ -145,7 +147,7 @@ export function jsonFileStore(
 
     for (const handler of [...handlers]) {
       try {
-        handler(cloneSnapshot(next));
+        handler(cloneStoreSnapshot(next));
       } catch {
         // Store watchers are isolated so one bad consumer does not block others.
       }
@@ -190,7 +192,7 @@ export function jsonFileStore(
     },
     async save(snapshot): Promise<void> {
       assertOpen(name, shutDown, "save");
-      pendingSnapshot = cloneSnapshot(snapshot);
+      pendingSnapshot = cloneStoreSnapshot(snapshot);
       if (debounceMs > 0) {
         scheduleSave();
         return;
@@ -289,11 +291,8 @@ function assertOpen(name: string, shutDown: boolean, phase: string): void {
   throw new Error(`Preference store '${name}' has been shut down during ${phase}.`);
 }
 
-function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
-  const cloned = structuredClone(snapshot) as Record<string, unknown>;
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(cloned).sort()) sorted[key] = cloned[key];
-  return sorted;
+function snapshotJson(snapshot: PreferenceSnapshot): string {
+  return JSON.stringify(snapshot);
 }
 
 function isNotFoundError(cause: unknown): boolean {

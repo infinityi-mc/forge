@@ -38,6 +38,28 @@ describe("sqliteStore", () => {
     db.close();
   });
 
+  test("preserves __proto__ rows as data without polluting loaded snapshots", async () => {
+    const db = new Database(":memory:", { create: true });
+    const store = sqliteStore({ database: db });
+
+    await store.save(snapshotWithProto({ polluted: true }));
+    const loaded = await store.load();
+
+    expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(loaded, "__proto__")).toBe(
+      true,
+    );
+    expect((loaded as Record<string, unknown>)["__proto__"]).toEqual({
+      polluted: true,
+    });
+    expect(
+      (Object.prototype as unknown as Record<string, unknown>).polluted,
+    ).toBeUndefined();
+
+    await store.shutdown?.();
+    db.close();
+  });
+
   test("rejects unsafe table names", () => {
     expect(() => sqliteStore({ table: "prefs; drop table prefs" })).toThrow(
       "Invalid preference table name",
@@ -52,4 +74,15 @@ async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+function snapshotWithProto(value: unknown): PreferenceSnapshot {
+  const snapshot: Record<string, unknown> = {};
+  Object.defineProperty(snapshot, "__proto__", {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  return snapshot;
 }

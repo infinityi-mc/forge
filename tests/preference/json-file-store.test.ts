@@ -84,6 +84,29 @@ describe("jsonFileStore", () => {
     });
   });
 
+  test("preserves __proto__ as data without polluting loaded snapshots", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const store = jsonFileStore({ path: file });
+
+      await store.save(snapshotWithProto({ polluted: true }));
+      const loaded = await store.load();
+
+      expect(Object.getPrototypeOf(loaded)).toBe(Object.prototype);
+      expect(Object.prototype.hasOwnProperty.call(loaded, "__proto__")).toBe(
+        true,
+      );
+      expect((loaded as Record<string, unknown>)["__proto__"]).toEqual({
+        polluted: true,
+      });
+      expect(
+        (Object.prototype as unknown as Record<string, unknown>).polluted,
+      ).toBeUndefined();
+
+      await store.shutdown?.();
+    });
+  });
+
   test("successful later saves clear stale background write errors", async () => {
     await withTempDir(async (dir) => {
       const file = join(dir, "prefs.json");
@@ -131,6 +154,29 @@ describe("jsonFileStore", () => {
       await prefs.shutdown();
     });
   });
+
+  test("opt-in watch ignores local saves and reports external writes", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const store = jsonFileStore({ path: file, watch: true, watchDebounceMs: 5 });
+      const observed: PreferenceSnapshot[] = [];
+      const unsubscribe = store.watch?.((snapshot) => {
+        observed.push(snapshot);
+      });
+
+      await store.save({ "appearance.theme": "dark" });
+      await store.flush?.();
+      await sleep(75);
+      expect(observed).toEqual([]);
+
+      await writeSnapshot(file, { "appearance.theme": "light" });
+      await waitFor(() => observed.length === 1);
+      expect(observed).toEqual([{ "appearance.theme": "light" }]);
+
+      unsubscribe?.();
+      await store.shutdown?.();
+    });
+  });
 });
 
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
@@ -161,4 +207,19 @@ async function waitFor(
     if (Date.now() >= deadline) throw new Error("condition was not met");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function snapshotWithProto(value: unknown): PreferenceSnapshot {
+  const snapshot: Record<string, unknown> = {};
+  Object.defineProperty(snapshot, "__proto__", {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  return snapshot;
 }
