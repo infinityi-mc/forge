@@ -177,6 +177,40 @@ describe("jsonFileStore", () => {
       await store.shutdown?.();
     });
   });
+
+  test("opt-in watch ignores local temp-file events before rename", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const store = jsonFileStore({ path: file, watch: true, watchDebounceMs: 0 });
+      const observed: PreferenceSnapshot[] = [];
+      const unsubscribe = store.watch?.((snapshot) => {
+        observed.push(snapshot);
+      });
+      const originalWrite = Bun.write;
+      (Bun as unknown as { write: typeof Bun.write }).write = (async (
+        ...args: Parameters<typeof Bun.write>
+      ) => {
+        const written = await originalWrite(...args);
+        const destination = String(args[0]);
+        if (destination.startsWith(`${file}.`) && destination.endsWith(".tmp")) {
+          await sleep(50);
+        }
+        return written;
+      }) as typeof Bun.write;
+
+      try {
+        await store.save({ "appearance.theme": "dark" });
+        await sleep(75);
+
+        expect(observed).toEqual([]);
+        expect(await store.load()).toEqual({ "appearance.theme": "dark" });
+      } finally {
+        (Bun as unknown as { write: typeof Bun.write }).write = originalWrite;
+        unsubscribe?.();
+        await store.shutdown?.();
+      }
+    });
+  });
 });
 
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {

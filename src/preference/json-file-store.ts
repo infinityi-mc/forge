@@ -48,6 +48,7 @@ export function jsonFileStore(
   let writeTail: Promise<void> = Promise.resolve();
   let writeError: unknown;
   let lastExternalJson: string | undefined;
+  let localWritesInFlight = 0;
   let shutDown = false;
 
   const readSnapshot = async (): Promise<PreferenceSnapshot | undefined> => {
@@ -85,9 +86,14 @@ export function jsonFileStore(
 
   const enqueueWrite = (snapshot: PreferenceSnapshot): Promise<void> => {
     const run = writeTail.then(async () => {
-      await atomicWriteSnapshot(filePath, snapshot);
-      lastExternalJson = snapshotJson(snapshot);
-      writeError = undefined;
+      localWritesInFlight += 1;
+      try {
+        await atomicWriteSnapshot(filePath, snapshot);
+        lastExternalJson = snapshotJson(snapshot);
+        writeError = undefined;
+      } finally {
+        localWritesInFlight -= 1;
+      }
     });
     writeTail = run.catch((cause) => {
       writeError = cause;
@@ -133,6 +139,7 @@ export function jsonFileStore(
 
   const reloadExternal = async (): Promise<void> => {
     if (shutDown) return;
+    if (localWritesInFlight > 0) return;
     let snapshot: PreferenceSnapshot | undefined;
     try {
       snapshot = await readSnapshot();
