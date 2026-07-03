@@ -176,7 +176,8 @@ describe("jsonFileStore", () => {
 
       expect(prefs.isSet("appearance.theme")).toBe(false);
       expect(changed).toEqual([["appearance.theme"]]);
-      expect(diagnostics).toEqual([]);
+      expect(diagnostics.at(-1)?.status).toBe("store_error");
+      expect(diagnostics.at(-1)?.reason).toContain("Corrupt preference file");
       expect(await Bun.file(`${file}.corrupt`).exists()).toBe(true);
 
       await prefs.shutdown();

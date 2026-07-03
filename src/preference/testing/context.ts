@@ -14,11 +14,17 @@ type UnknownRecord = Record<string, unknown>;
 
 const overrideStorage = new AsyncLocalStorage<readonly UnknownRecord[]>();
 
-export type DeepPartial<T> = T extends readonly unknown[]
+type AtomicObject = Date | RegExp | URL | Map<unknown, unknown> | Set<unknown>;
+
+export type DeepPartial<T> = T extends (...args: never[]) => unknown
   ? T
-  : T extends object
-    ? { readonly [K in keyof T]?: DeepPartial<T[K]> }
-    : T;
+  : T extends readonly unknown[]
+    ? T
+    : T extends AtomicObject
+      ? T
+      : T extends object
+        ? { readonly [K in keyof T]?: DeepPartial<T[K]> }
+        : T;
 
 installPreferenceOverrideReader({
   read: getOverride,

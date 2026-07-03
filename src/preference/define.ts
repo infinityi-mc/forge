@@ -29,7 +29,11 @@ import {
   emitPreferenceMigration,
   emitPreferenceSave,
 } from "./observability";
-import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
+import {
+  cloneStoreSnapshot,
+  setSnapshotValue,
+  tryCloneStoreSnapshotValue,
+} from "./store-snapshot";
 import type {
   DefinePreferencesBaseOptions,
   DefinePreferencesOptions,
@@ -343,7 +347,8 @@ export async function definePreferences<
   for (const scope of scopeStates) {
     if (scope.store.watch === undefined) continue;
     try {
-      scope.unsubscribeExternal = scope.store.watch((snapshot) => {
+      scope.unsubscribeExternal = scope.store.watch((snapshot, diagnostic) => {
+        if (diagnostic !== undefined) addDiagnostics([scopeDiagnostic(scope, diagnostic)]);
         applyExternalSnapshot(scope, snapshot);
       });
     } catch (err) {
@@ -613,7 +618,8 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     return invalidStoreSnapshotFallback(scope, versioning.currentVersion, snapshot);
   }
 
-  const cloned = cloneSnapshot(snapshot);
+  const cloneResult = cloneRawSnapshot(snapshot);
+  const cloned = cloneResult.snapshot;
   const versionResult = readSnapshotVersion(cloned, versioning.currentVersion);
   const withoutVersion = snapshotWithoutKey(cloned, VERSION_KEY);
   if (!versionResult.ok) {
@@ -649,9 +655,14 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     explicit: cloneSnapshot(validated.explicit),
     preserved: cloneSnapshot(split.unknown),
     version,
-    diagnostics: validated.diagnostics.map((diagnostic) =>
-      scopeDiagnostic(scope, diagnostic),
-    ),
+    diagnostics: [
+      ...cloneResult.diagnostics.map((diagnostic) =>
+        scopeDiagnostic(scope, diagnostic),
+      ),
+      ...validated.diagnostics.map((diagnostic) =>
+        scopeDiagnostic(scope, diagnostic),
+      ),
+    ],
     loadedKeys: validated.loadedKeys,
     fallbackKeys: validated.fallbackKeys,
     migration,
@@ -1053,6 +1064,27 @@ function uniqueSorted(values: readonly string[]): readonly string[] {
 
 function hasOwn(object: PreferenceSnapshot, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function cloneRawSnapshot(snapshot: Record<string, unknown>): {
+  readonly snapshot: PreferenceSnapshot;
+  readonly diagnostics: readonly PreferenceDiagnostic[];
+} {
+  const cloned: Record<string, unknown> = {};
+  const diagnostics: PreferenceDiagnostic[] = [];
+  for (const key of Object.keys(snapshot).sort()) {
+    const clone = tryCloneStoreSnapshotValue(snapshot[key]);
+    if (clone.ok) {
+      setSnapshotValue(cloned, key, clone.value);
+      continue;
+    }
+    diagnostics.push({
+      status: "invalid",
+      path: key,
+      reason: `Preference value could not be cloned safely. ${clone.reason}`,
+    });
+  }
+  return { snapshot: cloned, diagnostics };
 }
 
 function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {

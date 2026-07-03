@@ -25,6 +25,25 @@ describe("sqliteStore", () => {
     });
   });
 
+  test("falls back corrupt rows without losing valid rows", async () => {
+    const db = new Database(":memory:", { create: true });
+    const store = sqliteStore({ database: db });
+
+    await store.save({ "appearance.theme": "dark" });
+    db.query("INSERT INTO _forge_preferences (key, value) VALUES (?, ?)").run(
+      "appearance.fontSize",
+      "{",
+    );
+
+    expect(await store.load()).toEqual({
+      "appearance.fontSize": undefined,
+      "appearance.theme": "dark",
+    });
+
+    await store.shutdown?.();
+    db.close();
+  });
+
   test("transactional saves replace stale keys", async () => {
     const db = new Database(":memory:", { create: true });
     const store = sqliteStore({ database: db });

@@ -78,7 +78,11 @@ export function sqliteStore(
 
       const snapshot: Record<string, unknown> = {};
       for (const row of rows) {
-        setSnapshotValue(snapshot, row.key, JSON.parse(row.value) as unknown);
+        try {
+          setSnapshotValue(snapshot, row.key, JSON.parse(row.value) as unknown);
+        } catch {
+          setSnapshotValue(snapshot, row.key, undefined);
+        }
       }
       return snapshot;
     },

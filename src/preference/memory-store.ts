@@ -16,18 +16,18 @@ export interface MemoryPreferenceStore extends PreferenceStore {
 }
 
 export function memoryStore(
-  initial: PreferenceSnapshot = {},
+  initial?: PreferenceSnapshot,
   options: MemoryStoreOptions = {},
 ): MemoryPreferenceStore {
-  let current = cloneSnapshot(initial);
+  let current = initial === undefined ? undefined : cloneSnapshot(initial);
   let shutDown = false;
   const handlers = new Set<(snapshot: PreferenceSnapshot) => void>();
   const name = options.name ?? "memory";
 
   return {
     name,
-    async load(): Promise<PreferenceSnapshot> {
-      return cloneSnapshot(current);
+    async load(): Promise<PreferenceSnapshot | undefined> {
+      return current === undefined ? undefined : cloneSnapshot(current);
     },
     async save(snapshot: PreferenceSnapshot): Promise<void> {
       current = cloneSnapshot(snapshot);
@@ -48,7 +48,7 @@ export function memoryStore(
       handlers.clear();
     },
     snapshot(): PreferenceSnapshot {
-      return cloneSnapshot(current);
+      return current === undefined ? {} : cloneSnapshot(current);
     },
     replace(snapshot: PreferenceSnapshot): void {
       current = cloneSnapshot(snapshot);

@@ -16,7 +16,7 @@ import {
  * Pass `TValues` explicitly (for example `PreferenceValues<typeof schema>`) to
  * type-check override shapes; otherwise TypeScript infers from the override.
  */
-export async function mockPreferences<TValues, T>(
+export async function mockPreferences<TValues, T = unknown>(
   overrides: DeepPartial<TValues>,
   fn: () => T | Promise<T>,
 ): Promise<Awaited<T>> {
