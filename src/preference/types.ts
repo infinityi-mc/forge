@@ -31,6 +31,46 @@ export type PreferenceValues<S> = S extends Leaf<infer T>
     ? { readonly [K in keyof S]: PreferenceValues<S[K]> }
     : never;
 
+type StringKeyOf<T> = Extract<keyof T, string>;
+
+/** Dotted path union for every leaf in a preference schema. */
+export type PreferencePath<S> = S extends PreferenceLeaf
+  ? never
+  : S extends PreferenceSchema
+    ? {
+        [K in StringKeyOf<S>]: S[K] extends PreferenceLeaf
+          ? K
+          : S[K] extends PreferenceSchema
+            ? `${K}.${PreferencePath<S[K]>}`
+            : never;
+      }[StringKeyOf<S>]
+    : never;
+
+/** Runtime value type exposed at a dotted preference path. */
+export type PreferencePathValue<
+  S,
+  P extends string,
+> = P extends `${infer Head}.${infer Rest}`
+  ? Head extends keyof S
+    ? PreferencePathValue<S[Head], Rest>
+    : never
+  : P extends keyof S
+    ? PreferenceValues<S[P]>
+    : never;
+
+/** Values accepted by write APIs. Use `reset(path)` to clear optionals. */
+export type PreferenceWritableValue<
+  S,
+  P extends PreferencePath<S>,
+> = Exclude<PreferencePathValue<S, P>, undefined>;
+
+/** Nested partial patch accepted by `prefs.update(...)`. */
+export type PreferenceUpdate<S> = S extends PreferenceLeaf
+  ? Exclude<PreferenceValues<S>, undefined>
+  : S extends PreferenceSchema
+    ? { readonly [K in keyof S]?: PreferenceUpdate<S[K]> }
+    : never;
+
 /** Snapshot keyed by dotted schema path, containing explicit user values only. */
 export type PreferenceSnapshot = Readonly<Record<string, unknown>>;
 
@@ -43,6 +83,7 @@ export interface PreferenceStore {
   load(): Promise<PreferenceSnapshot | undefined>;
   save(snapshot: PreferenceSnapshot): Promise<void>;
   watch?(onExternalChange: PreferenceSnapshotHandler): () => void;
+  flush?(): Promise<void>;
   shutdown?(): Promise<void>;
 }
 
@@ -64,9 +105,40 @@ export interface DefinePreferencesOptions {
   ) => void | Promise<void>;
 }
 
+export type PreferenceChangeHandler<S extends PreferenceSchema> = (
+  oldValues: PreferenceValues<S>,
+  nextValues: PreferenceValues<S>,
+  changedKeys: readonly PreferencePath<S>[],
+) => void;
+
 export interface PreferencesHandle<S extends PreferenceSchema> {
   /** Live proxy view of the latest validated and deeply-frozen preference tree. */
   readonly values: PreferenceValues<S>;
   /** Diagnostics produced while loading the current snapshot. */
   readonly diagnostics: readonly PreferenceDiagnostic[];
+  /** Persist an explicit value for one preference leaf. */
+  set<P extends PreferencePath<S>>(
+    path: P,
+    value: PreferenceWritableValue<S, P>,
+  ): Promise<void>;
+  /** Atomically apply a nested partial patch derived from the current values. */
+  update(
+    updater: (
+      values: PreferenceValues<S>,
+    ) => PreferenceUpdate<S> | void | Promise<PreferenceUpdate<S> | void>,
+  ): Promise<void>;
+  /** Delete an explicit value so the default or optional fallback shows through. */
+  reset<P extends PreferencePath<S>>(path: P): Promise<void>;
+  /** Delete every explicit value. */
+  resetAll(): Promise<void>;
+  /** Whether a path has an explicit persisted value. */
+  isSet<P extends PreferencePath<S>>(path: P): boolean;
+  /** Subscribe to effective value changes. */
+  subscribe(handler: PreferenceChangeHandler<S>): () => void;
+  /** Drain pending store work when the store supports it. */
+  flush(): Promise<void>;
+  /** Flush and release store resources. Safe to call more than once. */
+  shutdown(): Promise<void>;
+  /** TS 5.2+ disposable hook; aliases `shutdown()`. */
+  [Symbol.asyncDispose](): Promise<void>;
 }

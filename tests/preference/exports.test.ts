@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as preference from "../../src/preference";
 
 describe("preference exports", () => {
-  test("submodule entrypoint exposes the PR A public surface", () => {
+  test("submodule entrypoint exposes the public surface", () => {
     expect(preference.definePreferences).toBeFunction();
     expect(preference.memoryStore).toBeFunction();
     expect(preference.t).toBeDefined();

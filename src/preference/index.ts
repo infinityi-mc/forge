@@ -20,14 +20,19 @@ export {
 
 export type {
   DefinePreferencesOptions,
+  PreferenceChangeHandler,
   PreferenceDiagnostic,
   PreferenceDiagnosticStatus,
   PreferenceLeaf,
+  PreferencePath,
+  PreferencePathValue,
   PreferenceSchema,
   PreferenceSchemaNode,
   PreferenceSnapshot,
   PreferenceSnapshotHandler,
   PreferenceStore,
+  PreferenceUpdate,
+  PreferenceWritableValue,
   PreferencesHandle,
   PreferenceValues,
 } from "./types";
