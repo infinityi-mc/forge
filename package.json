@@ -1,6 +1,6 @@
 {
   "name": "@infinityi/forge",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "The boring infrastructure layer your business logic deserves. An opinionated, composable, Bun-first toolkit for distributed systems: telemetry, resilience, config, data, messaging, http, security, and lifecycle.",
   "module": "./dist/index.js",
   "main": "./dist/index.js",
@@ -43,6 +43,7 @@
     "dist",
     "src",
     "CHANGELOG.md",
+    "GUIDE.md",
     "README.md",
     "LICENSE"
   ],

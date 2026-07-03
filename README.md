@@ -10,7 +10,7 @@
 
 ## 🎯 Project Goal
 
-Most production applications stand on the same eight infrastructure pillars. Yet, most teams reinvent them—usually poorly, under time pressure, and without realizing they are solving already-solved problems.
+Most production applications stand on the same nine infrastructure pillars. Yet, most teams reinvent them—usually poorly, under time pressure, and without realizing they are solving already-solved problems.
 
 **Forge** exists to eliminate the "infrastructure tax." It is an opinionated, composable toolkit that handles the heavy lifting of distributed systems so your team can spend time on *what* the app does (business value), rather than *how it survives* (infrastructure). 
 

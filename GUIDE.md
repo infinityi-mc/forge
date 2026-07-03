@@ -1,6 +1,6 @@
 # Forge — Complete API Surface Guide
 
-> This document covers **every public runtime API** across all 8 modules.
+> This document covers **every public runtime API** across all 9 modules.
 > For usage patterns and quick-start, see [README.md](./README.md).
 
 ---
@@ -12,9 +12,10 @@
 3. [HTTP](#3-http) — Client, server, middleware, OpenAPI
 4. [Lifecycle](#4-lifecycle) — Boot, shutdown, health probes
 5. [Messaging](#5-messaging) — Pub/sub, inbox, dead-letter, outbox, jobs
-6. [Resilience](#6-resilience) — Retry, timeout, circuit breaker, rate limit, bulkhead, fallback, hedge
-7. [Security](#7-security) — JWT/API-key verification, authorization, audit, JWKS
-8. [Telemetry](#8-telemetry) — Logging, metrics, tracing, context propagation
+6. [Preference](#6-preference) — User-owned runtime preferences
+7. [Resilience](#7-resilience) — Retry, timeout, circuit breaker, rate limit, bulkhead, fallback, hedge
+8. [Security](#8-security) — JWT/API-key verification, authorization, audit, JWKS
+9. [Telemetry](#9-telemetry) — Logging, metrics, tracing, context propagation
 
 ---
 
@@ -1088,7 +1089,111 @@ await worker.stop();
 
 ---
 
-## 6. Resilience
+## 6. Preference
+
+```ts
+import {
+  definePreferences,
+  jsonFileStore,
+  memoryStore,
+  sqliteStore,
+  t,
+  // Errors
+  PreferenceError,
+  PreferenceSchemaError,
+  PreferenceStoreError,
+  PreferenceValidationError,
+} from "@infinityi/forge/preference";
+```
+
+### `definePreferences(schema, options): Promise<PreferencesHandle<S, Scope>>`
+
+Load, validate, and return a dynamic-read/validated-write handle. Bad stored values are isolated per leaf and fallback safely.
+
+```ts
+import { definePreferences, jsonFileStore, t } from "@infinityi/forge/preference";
+
+const prefs = await definePreferences(
+  {
+    appearance: {
+      theme: t.enum(["light", "dark", "system"]).default("system"),
+      fontSize: t.number.int.default(14),
+    },
+    editor: {
+      workspaceName: t.string.optional(),
+    },
+  },
+  {
+    store: jsonFileStore({ path: "./preferences.json", debounceMs: 250 }),
+    version: 2,
+    migrations: {
+      2: (raw) => ({
+        ...raw,
+        "editor.workspaceName": raw["editor.wsName"] ?? raw["editor.workspaceName"],
+      }),
+    },
+    logger: console,
+  },
+);
+```
+
+Every leaf in a preference schema **must** declare `.default(...)` or `.optional()`.
+
+**`DefinePreferencesOptions`**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `store` | `PreferenceStore` | — | Persistence store. Mutually exclusive with `scopes` |
+| `scopes` | `Record<string, PreferenceStore>` | — | Multi-layered stores (later entries win). Mutually exclusive with `store` |
+| `version` | `number` | — | Schema version |
+| `migrations` | `Record<number, PreferenceMigration>` | — | Ordered migration functions |
+| `logger` | `Logger` | — | Structured logger |
+| `onDiagnostic` | `(d: PreferenceDiagnostic) => void` | — | Callback for non-fatal load fallbacks |
+
+### `PreferencesHandle<S, Scope>`
+
+| Member | Type / Signature | Description |
+|--------|------------------|-------------|
+| `values` | `PreferenceValues<S>` | Live deeply-frozen view |
+| `diagnostics` | `PreferenceDiagnostic[]` | Load/migration issue list |
+| `set(path, value, opts?)` | `Promise<void>` | Persist an explicit value |
+| `update(updater)` | `Promise<void>` | Apply atomic partial patch |
+| `reset(path, opts?)` | `Promise<void>` | Clear an explicit override |
+| `resetAll(opts?)` | `Promise<void>` | Clear all explicit overrides |
+| `isSet(path, opts?)` | `boolean` | Check if path has explicit value |
+| `subscribe(handler)` | `() => void` | Listen for value updates |
+| `flush()` | `Promise<void>` | Force drain pending store writes |
+| `shutdown()` | `Promise<void>` | Stop watchers & release store |
+| `[Symbol.asyncDispose]` | `Promise<void>` | `await using` integration |
+
+### Built-in Stores
+
+All stores implement `PreferenceStore` interface:
+
+* **`jsonFileStore(opts)`**: Atomic writes with temporary file + rename, corrupt-file recovery, write debouncing, and filesystem watchers.
+  * `path`: `string` (required)
+  * `debounceMs`: `number` (delay writes)
+  * `watch`: `boolean` (live file-reloading)
+* **`sqliteStore(opts)`**: Transactional rows inside `bun:sqlite`.
+  * `database`: `Database` (existing instance)
+  * `path`: `string` (path to file)
+  * `table`: `string` (defaults to `_forge_preferences`)
+* **`memoryStore(initial?, opts?)`**: In-memory test store.
+
+### Testing — `@infinityi/forge/preference/testing`
+
+```ts
+import { mockPreferences } from "@infinityi/forge/preference/testing";
+
+// Scoped AsyncLocalStorage override stack. Does not write to stores.
+await mockPreferences({ appearance: { theme: "light" } }, async () => {
+  prefs.values.appearance.theme; // "light" inside this async block
+});
+```
+
+---
+
+## 7. Resilience
 
 ```ts
 import {
@@ -1314,7 +1419,7 @@ Every operation receives:
 
 ---
 
-## 7. Security
+## 8. Security
 
 ```ts
 import {
@@ -1555,7 +1660,7 @@ const healthComp = securityHealthComponent({
 
 ---
 
-## 8. Telemetry
+## 9. Telemetry
 
 ```ts
 import { initTelemetry, TelemetryError } from "@infinityi/forge/telemetry";
@@ -1894,6 +1999,7 @@ Every module defines a structured error hierarchy rooted at a module-level base 
 | HTTP | `HttpError` | `RequestError`, `ResponseError`, `TimeoutError`, `RouteConflictError`, `ValidationError`, `OpenApiError` |
 | Lifecycle | `LifecycleError` | `StartupError`, `ShutdownError`, `ShutdownTimeoutError`, `ComponentRegistrationError`, `HealthCheckError` |
 | Messaging | `MessagingError` | `TransportError`, `SerializationError`, `HandlerError`, `IdempotencyError`, `MessageDroppedError`, `OutboxRelayError`, `JobError` |
+| Preference | `PreferenceError` | `PreferenceSchemaError`, `PreferenceStoreError`, `PreferenceValidationError` |
 | Resilience | `ResilienceError` | `RetryExhaustedError`, `TimeoutError`, `CircuitOpenError`, `RateLimitedError`, `BulkheadFullError`, `HedgeCancelledError`, `TransientError`, `RateLimitError` |
 | Security | `SecurityError` | `AuthenticationError`, `AuthorizationError`, `TokenInvalidError`, `TokenExpiredError`, `TokenClaimError`, `KeyResolutionError`, `AlgorithmNotAllowedError`, `AuditError` |
 | Telemetry | `TelemetryError` | — |
@@ -1910,6 +2016,8 @@ import { ... } from "@infinityi/forge/data";
 import { ... } from "@infinityi/forge/http";
 import { ... } from "@infinityi/forge/lifecycle";
 import { ... } from "@infinityi/forge/messaging";
+import { ... } from "@infinityi/forge/preference";
+import { ... } from "@infinityi/forge/preference/testing";
 import { ... } from "@infinityi/forge/resilience";
 import { ... } from "@infinityi/forge/security";
 import { ... } from "@infinityi/forge/telemetry";
