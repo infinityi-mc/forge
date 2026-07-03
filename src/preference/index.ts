@@ -1,8 +1,8 @@
 /**
  * `forge/preference` — user-owned, runtime-mutable, fail-safe settings.
  *
- * PR A exposes the read path: schema reuse, fail-safe per-leaf validation,
- * memory store, diagnostics, and a deeply-frozen live values proxy.
+ * Exposes fail-safe preference reads, validated writes, durable stores,
+ * versioning, scopes, observability, and lifecycle helpers.
  *
  * @module
  */
@@ -24,6 +24,7 @@ export type {
   JsonFilePreferenceStore,
   JsonFileStoreOptions,
 } from "./json-file-store";
+export type { Logger, LogAttributes } from "../config/logger";
 export type { MemoryPreferenceStore, MemoryStoreOptions } from "./memory-store";
 export type { SqlitePreferenceStore, SqliteStoreOptions } from "./sqlite-store";
 

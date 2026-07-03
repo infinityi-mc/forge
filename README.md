@@ -10,7 +10,7 @@
 
 ## 🎯 Project Goal
 
-Most production applications stand on the same eight infrastructure pillars. Yet, most teams reinvent them—usually poorly, under time pressure, and without realizing they are solving already-solved problems.
+Most production applications stand on the same nine infrastructure pillars. Yet, most teams reinvent them—usually poorly, under time pressure, and without realizing they are solving already-solved problems.
 
 **Forge** exists to eliminate the "infrastructure tax." It is an opinionated, composable toolkit that handles the heavy lifting of distributed systems so your team can spend time on *what* the app does (business value), rather than *how it survives* (infrastructure). 
 
@@ -39,6 +39,7 @@ Forge is modular. Import only what you need; tree-shaking ensures zero bloat.
 | **`forge/telemetry`** | Structured logging, distributed tracing, and metrics (Prometheus/OTLP) with automatic context propagation. |
 | **`forge/resilience`** | Composable decorators for `retry`, `timeout`, `circuitBreaker`, `bulkhead`, and `rateLimit`. |
 | **`forge/config`** | Schema-validated, fail-fast configuration and secrets management. Typed access, redacted logging. |
+| **`forge/preference`** | User-owned runtime preferences with fail-safe reads, validated writes, durable stores, scopes, and migrations. |
 | **`forge/data`** | Connection pooling, Unit of Work (transactions), type-safe query building, and migration tooling. |
 | **`forge/messaging`** | Transactional Outbox pattern, idempotent consumers, Dead Letter Queues (DLQ), and background jobs. |
 | **`forge/http`** | Resilient HTTP client, server middleware stack, OpenAPI generation, and RFC 7807 Problem Details. |

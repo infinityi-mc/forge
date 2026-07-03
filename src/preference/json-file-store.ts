@@ -333,7 +333,10 @@ function isRelevantWatchEvent(
 ): boolean {
   if (filename === null) return true;
   const changed = String(filename);
-  return changed === target || changed.startsWith(`${target}.`);
+  return (
+    changed === target ||
+    (changed.startsWith(`${target}.`) && changed.endsWith(".tmp"))
+  );
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
