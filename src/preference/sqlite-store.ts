@@ -9,7 +9,11 @@
 
 import { Database } from "bun:sqlite";
 import { PreferenceStoreError } from "./errors";
-import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
+import {
+  cloneStoreSnapshot,
+  CorruptPreferenceSnapshotValue,
+  setSnapshotValue,
+} from "./store-snapshot";
 import type { PreferenceSnapshot, PreferenceStore } from "./types";
 
 export interface SqliteStoreOptions {
@@ -78,7 +82,15 @@ export function sqliteStore(
 
       const snapshot: Record<string, unknown> = {};
       for (const row of rows) {
-        setSnapshotValue(snapshot, row.key, JSON.parse(row.value) as unknown);
+        try {
+          setSnapshotValue(snapshot, row.key, JSON.parse(row.value) as unknown);
+        } catch (cause) {
+          setSnapshotValue(
+            snapshot,
+            row.key,
+            new CorruptPreferenceSnapshotValue(row.key, cause),
+          );
+        }
       }
       return snapshot;
     },

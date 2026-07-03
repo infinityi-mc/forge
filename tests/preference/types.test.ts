@@ -29,6 +29,7 @@ const nestedPreferenceSchema = {
   appearance: {
     theme: t.enum(["light", "dark", "system"] as const).default("system"),
     fontSize: t.number.default(14),
+    flags: t.json<string[]>().default([]),
   },
   editor: {
     workspaceName: t.string.optional(),
@@ -58,6 +59,13 @@ const invalidWorkspaceValue: PreferenceWritableValue<
 const validUpdate: PreferenceUpdate<NestedPreferenceSchema> = {
   appearance: { fontSize: 16 },
 };
+const validSiblingUpdate: PreferenceUpdate<NestedPreferenceSchema> = {
+  appearance: { fontSize: 16, theme: "dark" },
+};
+const invalidEmptyUpdate = {
+  // @ts-expect-error update patches must include at least one key.
+  appearance: {},
+} satisfies PreferenceUpdate<NestedPreferenceSchema>;
 const invalidUpdate = {
   appearance: {
     // @ts-expect-error update patches must use leaf value types.
@@ -74,6 +82,8 @@ const invalidUndefinedUpdate = {
 async function writePathTypeChecks(
   prefs: PreferencesHandle<NestedPreferenceSchema>,
 ): Promise<void> {
+  // @ts-expect-error runtime values are deeply readonly.
+  prefs.values.appearance.flags.push("beta");
   await prefs.set("appearance.theme", "dark");
   await prefs.set("editor.workspaceName", "forge");
   // @ts-expect-error path must exist.
@@ -109,6 +119,8 @@ void themeValue;
 void workspaceValue;
 void invalidWorkspaceValue;
 void validUpdate;
+void validSiblingUpdate;
+void invalidEmptyUpdate;
 void invalidUpdate;
 void invalidUndefinedUpdate;
 void writePathTypeChecks;

@@ -25,9 +25,15 @@ export interface PreferenceSchema {
   readonly [key: string]: PreferenceSchemaNode;
 }
 
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
 /** Infer the deeply-readonly runtime values exposed at `prefs.values`. */
 export type PreferenceValues<S> = S extends Leaf<infer T>
-  ? T
+  ? DeepReadonly<T>
   : S extends PreferenceSchema
     ? { readonly [K in keyof S]: PreferenceValues<S[K]> }
     : never;
@@ -65,15 +71,13 @@ export type PreferenceWritableValue<
   P extends PreferencePath<S>,
 > = Exclude<PreferencePathValue<S, P>, undefined>;
 
-type PreferenceUpdateObject<S> = {
-  [K in StringKeyOf<S>]: {
-    readonly [P in K]: PreferenceUpdate<S[P]>;
-  } & PreferenceUpdateTail<Omit<S, K>>;
-}[StringKeyOf<S>];
+type AtLeastOne<T> = {
+  readonly [K in keyof T]: Pick<T, K> & Partial<Omit<T, K>>;
+}[keyof T];
 
-type PreferenceUpdateTail<S> = StringKeyOf<S> extends never
-  ? {}
-  : {} | PreferenceUpdateObject<S>;
+type PreferenceUpdateObject<S extends PreferenceSchema> = AtLeastOne<{
+  readonly [K in StringKeyOf<S>]: PreferenceUpdate<S[K]>;
+}>;
 
 /** Nested partial patch accepted by `prefs.update(...)`. */
 export type PreferenceUpdate<S> = S extends PreferenceLeaf
@@ -99,7 +103,10 @@ export type PreferenceScopeName<Scopes extends PreferenceScopeStores> = Extract<
 >;
 
 /** Callback fired by stores that can observe external preference changes. */
-export type PreferenceSnapshotHandler = (snapshot: PreferenceSnapshot) => void;
+export type PreferenceSnapshotHandler = (
+  snapshot: PreferenceSnapshot,
+  diagnostic?: PreferenceDiagnostic,
+) => void;
 
 /** Minimal store seam for user-owned preference persistence. */
 export interface PreferenceStore {

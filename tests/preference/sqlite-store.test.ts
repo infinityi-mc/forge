@@ -3,7 +3,13 @@ import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sqliteStore, type PreferenceSnapshot } from "../../src/preference";
+import {
+  definePreferences,
+  sqliteStore,
+  t,
+  type PreferenceDiagnostic,
+  type PreferenceSnapshot,
+} from "../../src/preference";
 
 describe("sqliteStore", () => {
   test("loads empty stores as first-run and persists across reopen", async () => {
@@ -23,6 +29,45 @@ describe("sqliteStore", () => {
       expect(await reopened.load()).toEqual(snapshot);
       await reopened.shutdown?.();
     });
+  });
+
+  test("diagnoses corrupt rows without losing valid rows", async () => {
+    const db = new Database(":memory:", { create: true });
+    const store = sqliteStore({ database: db });
+    const diagnostics: PreferenceDiagnostic[] = [];
+
+    await store.save({ "appearance.theme": "dark" });
+    db.query("INSERT INTO _forge_preferences (key, value) VALUES (?, ?)").run(
+      "appearance.fontSize",
+      "{",
+    );
+
+    const prefs = await definePreferences(
+      {
+        appearance: {
+          theme: t.string.default("system"),
+          fontSize: t.number.default(14),
+        },
+      },
+      {
+        store,
+        onDiagnostic(diagnostic) {
+          diagnostics.push(diagnostic);
+        },
+      },
+    );
+
+    expect(prefs.values.appearance.theme).toBe("dark");
+    expect(prefs.values.appearance.fontSize).toBe(14);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        path: "appearance.fontSize",
+        reason: expect.stringContaining("could not be parsed"),
+      }),
+    );
+
+    await prefs.shutdown();
+    db.close();
   });
 
   test("transactional saves replace stale keys", async () => {

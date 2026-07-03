@@ -9,7 +9,7 @@
  */
 
 import { mkdirSync, watch, type FSWatcher } from "node:fs";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import type {
   PreferenceSnapshot,
@@ -107,27 +107,31 @@ export function jsonFileStore(
   };
 
   const flushPending = async (): Promise<void> => {
-    if (saveTimer !== undefined) {
-      clearTimeout(saveTimer);
-      saveTimer = undefined;
-    }
+    while (true) {
+      if (saveTimer !== undefined) {
+        clearTimeout(saveTimer);
+        saveTimer = undefined;
+      }
 
-    const snapshot = pendingSnapshot;
-    if (snapshot !== undefined) {
-      pendingSnapshot = undefined;
-      try {
-        await enqueueWrite(snapshot);
-      } catch (cause) {
+      const snapshot = pendingSnapshot;
+      if (snapshot !== undefined) {
+        pendingSnapshot = undefined;
+        try {
+          await enqueueWrite(snapshot);
+        } catch (cause) {
+          writeError = undefined;
+          throw cause;
+        }
+        continue;
+      }
+
+      await writeTail;
+      if (writeError !== undefined) {
+        const cause = writeError;
         writeError = undefined;
         throw cause;
       }
-    }
-
-    await writeTail;
-    if (writeError !== undefined) {
-      const cause = writeError;
-      writeError = undefined;
-      throw cause;
+      if (saveTimer === undefined && pendingSnapshot === undefined) return;
     }
   };
 
@@ -149,10 +153,16 @@ export function jsonFileStore(
       return;
     }
     let snapshot: PreferenceSnapshot | undefined;
+    let diagnostic: Parameters<PreferenceSnapshotHandler>[1];
     try {
       snapshot = await readSnapshot();
     } catch (cause) {
       if (!(cause instanceof CorruptPreferenceFileError)) return;
+      diagnostic = {
+        status: "store_error",
+        store: name,
+        reason: cause.message,
+      };
       snapshot = {};
     }
 
@@ -163,7 +173,7 @@ export function jsonFileStore(
 
     for (const handler of [...handlers]) {
       try {
-        handler(cloneStoreSnapshot(next));
+        handler(cloneStoreSnapshot(next), diagnostic);
       } catch {
         // Store watchers are isolated so one bad consumer does not block others.
       }
@@ -263,7 +273,8 @@ async function atomicWriteSnapshot(
 
   await mkdir(directory, { recursive: true });
   try {
-    await Bun.write(temporaryPath, encoded);
+    await Bun.write(temporaryPath, encoded, { mode: 0o600 });
+    await chmod(temporaryPath, 0o600).catch(() => {});
     await fsyncFileBestEffort(temporaryPath);
     await rename(temporaryPath, filePath);
     await fsyncFileBestEffort(directory);

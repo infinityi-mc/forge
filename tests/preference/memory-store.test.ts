@@ -4,6 +4,16 @@ import { memoryStore, type PreferenceSnapshot } from "../../src/preference";
 type MutableSnapshot = Record<string, unknown>;
 
 describe("memoryStore", () => {
+  test("loads as first-run until a snapshot is saved", async () => {
+    const store = memoryStore();
+
+    expect(await store.load()).toBeUndefined();
+    expect(store.snapshot()).toEqual({});
+
+    await store.save({});
+    expect(await store.load()).toEqual({});
+  });
+
   test("deep-clones snapshots at every boundary", async () => {
     const initial = {
       "editor.settings": { nested: { fontSize: 14 }, files: ["a.ts"] },

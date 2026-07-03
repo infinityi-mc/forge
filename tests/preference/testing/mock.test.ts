@@ -5,7 +5,7 @@ import {
   t,
   type PreferenceValues,
 } from "../../../src/preference";
-import { mockPreferences } from "../../../src/preference/testing";
+import { mockPreferences, type DeepPartial } from "../../../src/preference/testing";
 
 const schema = {
   appearance: {
@@ -19,6 +19,24 @@ const schema = {
 };
 
 type AppPreferences = PreferenceValues<typeof schema>;
+type NativeLeafPreferences = {
+  readonly endpoint: URL;
+  readonly startedAt: Date;
+};
+
+const nativeLeafOverrides: DeepPartial<NativeLeafPreferences> = {
+  endpoint: new URL("https://example.com"),
+  startedAt: new Date(0),
+};
+const invalidNativeLeafOverrides = {
+  // @ts-expect-error native object leaves are atomic override values.
+  endpoint: { href: "https://example.com" },
+  // @ts-expect-error native object leaves are atomic override values.
+  startedAt: { getTime: () => 0 },
+} satisfies DeepPartial<NativeLeafPreferences>;
+
+void nativeLeafOverrides;
+void invalidNativeLeafOverrides;
 
 describe("mockPreferences", () => {
   test("overrides values inside fn without mutating the store", async () => {

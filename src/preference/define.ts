@@ -29,7 +29,12 @@ import {
   emitPreferenceMigration,
   emitPreferenceSave,
 } from "./observability";
-import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
+import {
+  cloneStoreSnapshot,
+  CorruptPreferenceSnapshotValue,
+  setSnapshotValue,
+  tryCloneStoreSnapshotValue,
+} from "./store-snapshot";
 import type {
   DefinePreferencesBaseOptions,
   DefinePreferencesOptions,
@@ -191,7 +196,7 @@ export async function definePreferences<
       versioning,
     );
     scope.explicit = cloneSnapshot(prepared.explicit);
-    scope.preserved = cloneSnapshot(prepared.preserved);
+    scope.preserved = cloneOpaqueSnapshot(prepared.preserved);
     scope.version = prepared.version;
     diagnostics.push(...prepared.diagnostics);
     loadFallbackKeys.push(...prepared.fallbackKeys);
@@ -310,7 +315,7 @@ export async function definePreferences<
         versioning,
       );
       scope.explicit = cloneSnapshot(prepared.explicit);
-      scope.preserved = cloneSnapshot(prepared.preserved);
+      scope.preserved = cloneOpaqueSnapshot(prepared.preserved);
       scope.version = prepared.version;
       addDiagnostics(prepared.diagnostics);
       const applied = applyMergedScopes(prepared.fallbackKeys);
@@ -343,7 +348,8 @@ export async function definePreferences<
   for (const scope of scopeStates) {
     if (scope.store.watch === undefined) continue;
     try {
-      scope.unsubscribeExternal = scope.store.watch((snapshot) => {
+      scope.unsubscribeExternal = scope.store.watch((snapshot, diagnostic) => {
+        if (diagnostic !== undefined) addDiagnostics([scopeDiagnostic(scope, diagnostic)]);
         applyExternalSnapshot(scope, snapshot);
       });
     } catch (err) {
@@ -613,7 +619,8 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     return invalidStoreSnapshotFallback(scope, versioning.currentVersion, snapshot);
   }
 
-  const cloned = cloneSnapshot(snapshot);
+  const cloneResult = cloneRawSnapshot(snapshot, leafPathSet);
+  const cloned = cloneResult.snapshot;
   const versionResult = readSnapshotVersion(cloned, versioning.currentVersion);
   const withoutVersion = snapshotWithoutKey(cloned, VERSION_KEY);
   if (!versionResult.ok) {
@@ -647,11 +654,16 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
   const validated = validatePreferenceSnapshot(schema, split.known);
   return {
     explicit: cloneSnapshot(validated.explicit),
-    preserved: cloneSnapshot(split.unknown),
+    preserved: cloneOpaqueSnapshot(split.unknown),
     version,
-    diagnostics: validated.diagnostics.map((diagnostic) =>
-      scopeDiagnostic(scope, diagnostic),
-    ),
+    diagnostics: [
+      ...cloneResult.diagnostics.map((diagnostic) =>
+        scopeDiagnostic(scope, diagnostic),
+      ),
+      ...validated.diagnostics.map((diagnostic) =>
+        scopeDiagnostic(scope, diagnostic),
+      ),
+    ],
     loadedKeys: validated.loadedKeys,
     fallbackKeys: validated.fallbackKeys,
     migration,
@@ -777,20 +789,20 @@ async function runMigrations(
   const currentVersion = versioning.currentVersion;
   if (currentVersion === undefined) {
     return {
-      snapshot: cloneSnapshot(snapshot),
+      snapshot: cloneOpaqueSnapshot(snapshot),
       version: storedVersion,
       appliedVersions: [],
     };
   }
   if (storedVersion !== undefined && storedVersion > currentVersion) {
     return {
-      snapshot: cloneSnapshot(snapshot),
+      snapshot: cloneOpaqueSnapshot(snapshot),
       version: storedVersion,
       appliedVersions: [],
     };
   }
 
-  let next = cloneSnapshot(snapshot);
+  let next = cloneOpaqueSnapshot(snapshot);
   const fromVersion = storedVersion ?? 1;
   const appliedVersions: number[] = [];
   for (let version = fromVersion + 1; version <= currentVersion; version += 1) {
@@ -904,7 +916,7 @@ function buildPersistedScopeSnapshot(
   if (scope.version !== undefined) {
     setSnapshotValue(persisted, VERSION_KEY, scope.version);
   }
-  return cloneSnapshot(persisted);
+  return cloneOpaqueSnapshot(persisted);
 }
 
 function snapshotWithValue(
@@ -1055,8 +1067,58 @@ function hasOwn(object: PreferenceSnapshot, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function cloneRawSnapshot(
+  snapshot: Record<string, unknown>,
+  leafPathSet: ReadonlySet<string>,
+): {
+  readonly snapshot: PreferenceSnapshot;
+  readonly diagnostics: readonly PreferenceDiagnostic[];
+} {
+  const cloned: Record<string, unknown> = {};
+  const diagnostics: PreferenceDiagnostic[] = [];
+  for (const key of Object.keys(snapshot).sort()) {
+    const value = snapshot[key];
+    if (value instanceof CorruptPreferenceSnapshotValue) {
+      diagnostics.push({
+        status: "invalid",
+        path: key,
+        reason: `Preference value could not be parsed from store. ${errorMessage(value.cause)}`,
+      });
+      setSnapshotValue(cloned, key, undefined);
+      continue;
+    }
+    if (!leafPathSet.has(key)) {
+      setSnapshotValue(cloned, key, value);
+      continue;
+    }
+    const clone = tryCloneStoreSnapshotValue(value);
+    if (clone.ok) {
+      setSnapshotValue(cloned, key, clone.value);
+      continue;
+    }
+    diagnostics.push({
+      status: "invalid",
+      path: key,
+      reason: `Preference value could not be cloned safely. ${clone.reason}`,
+    });
+  }
+  return { snapshot: cloned, diagnostics };
+}
+
+function cloneOpaqueSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
+  const cloned: Record<string, unknown> = {};
+  for (const key of Object.keys(snapshot).sort()) {
+    setSnapshotValue(cloned, key, snapshot[key]);
+  }
+  return cloned;
+}
+
 function cloneSnapshot(snapshot: PreferenceSnapshot): PreferenceSnapshot {
   return cloneStoreSnapshot(snapshot);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function storeErrorReason(
@@ -1064,7 +1126,7 @@ function storeErrorReason(
   phase: string,
   err: unknown,
 ): string {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   const scopeLabel =
     scope.diagnosticScope === undefined ? "" : ` scope '${scope.diagnosticScope}'`;
   return `Preference store '${scope.store.name}'${scopeLabel} failed during ${phase}. ${message}`;
