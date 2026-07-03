@@ -50,11 +50,10 @@ export async function definePreferences<S extends PreferenceSchema>(
   assertPreferenceSchema(schema);
 
   const diagnostics: PreferenceDiagnostic[] = [];
+  const leafEntries = collectLeaves(schema as unknown as ConfigSchema);
+  const leafPaths = leafEntries.map((entry) => entry.path);
   const leafMap = new Map(
-    collectLeaves(schema as unknown as ConfigSchema).map((entry) => [
-      entry.path,
-      entry.leaf,
-    ]),
+    leafEntries.map((entry) => [entry.path, entry.leaf]),
   );
   let explicit: PreferenceSnapshot | undefined;
 
@@ -101,18 +100,32 @@ export async function definePreferences<S extends PreferenceSchema>(
     currentExplicit = cloneSnapshot(nextExplicit);
     const previous = ref.current;
     const nextValues = deepFreeze(nextTree);
-    const changedKeys = diff(previous, nextValues) as PreferencePath<S>[];
+    const changedKeys = changedPreferenceKeys(
+      leafPaths,
+      previous,
+      nextValues,
+    ) as PreferencePath<S>[];
     if (changedKeys.length === 0) return;
 
     ref.current = nextValues;
     notifySubscribers(subscribers, previous, ref.current, changedKeys);
   };
 
+  const enqueueStateChange = (
+    work: () => void | Promise<void>,
+  ): Promise<void> => {
+    const run = writeQueue.then(work);
+    writeQueue = run.catch(() => {});
+    return run;
+  };
+
   const applyExternalSnapshot = (snapshot: PreferenceSnapshot): void => {
-    if (shutDown) return;
-    const result = validatePreferenceSnapshot(schema, snapshot);
-    addDiagnostics(result.diagnostics);
-    applyValidatedSnapshot(result.explicit, result.tree);
+    void enqueueStateChange(() => {
+      if (shutDown) return;
+      const result = validatePreferenceSnapshot(schema, snapshot);
+      addDiagnostics(result.diagnostics);
+      applyValidatedSnapshot(result.explicit, result.tree);
+    });
   };
 
   if (options.store.watch !== undefined) {
@@ -158,16 +171,19 @@ export async function definePreferences<S extends PreferenceSchema>(
     applyValidatedSnapshot(result.explicit, result.tree);
   };
 
-  const enqueueWrite = (work: () => Promise<void>): Promise<void> => {
-    const run = writeQueue.then(work);
-    writeQueue = run.catch(() => {});
-    return run;
+  const assertOpen = (): void => {
+    if (!shutDown) return;
+    throw new PreferenceStoreError(
+      `Preference store '${options.store.name}' has been shut down.`,
+      { store: options.store.name },
+    );
   };
 
   const set = async <P extends PreferencePath<S>>(
     path: P,
     value: PreferenceWritableValue<S, P>,
   ): Promise<void> => {
+    assertOpen();
     const leaf = requireLeaf(path);
     const validated = validatePreferenceWriteValue(path, leaf, value);
     if (!validated.ok) {
@@ -177,7 +193,7 @@ export async function definePreferences<S extends PreferenceSchema>(
       );
     }
 
-    await enqueueWrite(async () => {
+    await enqueueStateChange(async () => {
       const nextExplicit: Record<string, unknown> = {
         ...cloneSnapshot(currentExplicit),
       };
@@ -191,7 +207,8 @@ export async function definePreferences<S extends PreferenceSchema>(
       values: PreferenceValues<S>,
     ) => PreferenceUpdate<S> | void | Promise<PreferenceUpdate<S> | void>,
   ): Promise<void> => {
-    await enqueueWrite(async () => {
+    assertOpen();
+    await enqueueStateChange(async () => {
       const patch = await updater(ref.current);
       if (patch === undefined) return;
 
@@ -225,8 +242,9 @@ export async function definePreferences<S extends PreferenceSchema>(
   };
 
   const reset = async <P extends PreferencePath<S>>(path: P): Promise<void> => {
+    assertOpen();
     requireLeaf(path);
-    await enqueueWrite(async () => {
+    await enqueueStateChange(async () => {
       if (!hasOwn(currentExplicit, path)) return;
 
       const nextExplicit: Record<string, unknown> = {
@@ -238,7 +256,8 @@ export async function definePreferences<S extends PreferenceSchema>(
   };
 
   const resetAll = async (): Promise<void> => {
-    await enqueueWrite(async () => {
+    assertOpen();
+    await enqueueStateChange(async () => {
       await commitExplicit({});
     });
   };
@@ -377,6 +396,35 @@ function notifySubscribers<S extends PreferenceSchema>(
       // One bad observer must not block the committed preference update.
     }
   }
+}
+
+function changedPreferenceKeys(
+  leafPaths: readonly string[],
+  previous: unknown,
+  next: unknown,
+): string[] {
+  const changed: string[] = [];
+  for (const path of leafPaths) {
+    if (
+      diff(
+        { value: getAtPath(previous, path) },
+        { value: getAtPath(next, path) },
+      ).length > 0
+    ) {
+      changed.push(path);
+    }
+  }
+  changed.sort();
+  return changed;
+}
+
+function getAtPath(value: unknown, path: string): unknown {
+  let cursor = value;
+  for (const segment of path.split(".")) {
+    if (cursor === null || typeof cursor !== "object") return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
 }
 
 function validationError(path: string, reason: string): PreferenceValidationError {

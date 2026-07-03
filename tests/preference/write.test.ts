@@ -85,6 +85,77 @@ describe("definePreferences write path", () => {
     expect(prefs.values.appearance.fontSize).toBe(18);
   });
 
+  test("external snapshots are serialized with in-flight writes", async () => {
+    const saveStarted = deferred<void>();
+    const releaseSave = deferred<void>();
+    let external: PreferenceSnapshotHandler | undefined;
+    let saved = false;
+    const store: PreferenceStore = {
+      name: "external-race",
+      load: async () => ({}),
+      async save(_snapshot) {
+        if (!saved) {
+          saved = true;
+          saveStarted.resolve();
+          await releaseSave.promise;
+        }
+      },
+      watch(handler) {
+        external = handler;
+        return () => {};
+      },
+      async flush() {},
+    };
+    const prefs = await definePreferences(schema, { store });
+
+    const localWrite = prefs.set("appearance.theme", "dark");
+    await saveStarted.promise;
+    external?.({ "appearance.fontSize": 18 } satisfies PreferenceSnapshot);
+
+    releaseSave.resolve();
+    await localWrite;
+    await prefs.flush();
+
+    expect(prefs.values.appearance.theme).toBe("system");
+    expect(prefs.values.appearance.fontSize).toBe(18);
+    expect(prefs.isSet("appearance.theme")).toBe(false);
+    expect(prefs.isSet("appearance.fontSize")).toBe(true);
+  });
+
+  test("subscriber changed keys stay at schema leaf paths for JSON object leaves", async () => {
+    const objectSchema = {
+      settings: t.json<{ readonly theme: string }>().default({ theme: "light" }),
+    };
+    const prefs = await definePreferences(objectSchema, { store: memoryStore() });
+    const changed: Array<readonly string[]> = [];
+    prefs.subscribe((_oldValues, _nextValues, changedKeys) => {
+      changed.push(changedKeys);
+    });
+
+    await prefs.set("settings", { theme: "dark" });
+
+    expect(changed).toEqual([["settings"]]);
+  });
+
+  test("writes are rejected after shutdown starts", async () => {
+    const store = memoryStore();
+    const prefs = await definePreferences(schema, { store });
+
+    await prefs.shutdown();
+
+    await expect(prefs.set("appearance.theme", "dark")).rejects.toBeInstanceOf(
+      PreferenceStoreError,
+    );
+    await expect(
+      prefs.update(() => ({ appearance: { theme: "dark" } })),
+    ).rejects.toBeInstanceOf(PreferenceStoreError);
+    await expect(prefs.reset("appearance.theme")).rejects.toBeInstanceOf(
+      PreferenceStoreError,
+    );
+    await expect(prefs.resetAll()).rejects.toBeInstanceOf(PreferenceStoreError);
+    expect(store.snapshot()).toEqual({});
+  });
+
   test("set rejects invalid paths and values without saving", async () => {
     const store = memoryStore();
     const prefs = await definePreferences(schema, { store });
@@ -233,6 +304,7 @@ describe("definePreferences write path", () => {
       "appearance.fontSize": "huge",
       "unknown.future": true,
     });
+    await prefs.flush();
 
     expect(prefs.values.appearance.theme).toBe("dark");
     expect(prefs.values.appearance.fontSize).toBe(14);
@@ -285,6 +357,25 @@ describe("definePreferences write path", () => {
     expect(shutdowns).toBe(1);
     expect(unsubscriptions).toBe(1);
     expect(calls).toBe(0);
+  });
+
+  test("URL-secret diagnostics mention every accepted raw input type", async () => {
+    const prefs = await definePreferences(
+      {
+        endpoint: t.url.default(new URL("https://example.com")).secret(),
+      },
+      { store: memoryStore() },
+    );
+
+    try {
+      await prefs.set("endpoint", { href: "https://example.com" } as never);
+      throw new Error("expected PreferenceValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PreferenceValidationError);
+      expect((error as PreferenceValidationError).diagnostics[0]!.reason).toBe(
+        "Expected secret URL preference value to be a string or URL.",
+      );
+    }
   });
 });
 

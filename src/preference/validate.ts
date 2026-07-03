@@ -224,7 +224,7 @@ function parseUrlSecretPreferenceValue(
 
   return typeof raw === "string" || raw instanceof URL
     ? leaf.parse(String(raw))
-    : invalid("Expected secret URL preference value to be a string.");
+    : invalid("Expected secret URL preference value to be a string or URL.");
 }
 
 function snapshotValueForLeaf(leaf: Leaf<unknown>, value: unknown): unknown {

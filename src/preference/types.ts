@@ -64,11 +64,21 @@ export type PreferenceWritableValue<
   P extends PreferencePath<S>,
 > = Exclude<PreferencePathValue<S, P>, undefined>;
 
+type PreferenceUpdateObject<S> = {
+  [K in StringKeyOf<S>]: {
+    readonly [P in K]: PreferenceUpdate<S[P]>;
+  } & PreferenceUpdateTail<Omit<S, K>>;
+}[StringKeyOf<S>];
+
+type PreferenceUpdateTail<S> = StringKeyOf<S> extends never
+  ? {}
+  : {} | PreferenceUpdateObject<S>;
+
 /** Nested partial patch accepted by `prefs.update(...)`. */
 export type PreferenceUpdate<S> = S extends PreferenceLeaf
   ? Exclude<PreferenceValues<S>, undefined>
   : S extends PreferenceSchema
-    ? { readonly [K in keyof S]?: PreferenceUpdate<S[K]> }
+    ? PreferenceUpdateObject<S>
     : never;
 
 /** Snapshot keyed by dotted schema path, containing explicit user values only. */

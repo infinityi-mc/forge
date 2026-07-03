@@ -62,6 +62,12 @@ const invalidUpdate = {
     fontSize: "large",
   },
 } satisfies PreferenceUpdate<NestedPreferenceSchema>;
+const invalidUndefinedUpdate = {
+  editor: {
+    // @ts-expect-error reset clears optionals instead of update setting undefined.
+    workspaceName: undefined,
+  },
+} satisfies PreferenceUpdate<NestedPreferenceSchema>;
 
 async function writePathTypeChecks(
   prefs: PreferencesHandle<NestedPreferenceSchema>,
@@ -85,6 +91,7 @@ void workspaceValue;
 void invalidWorkspaceValue;
 void validUpdate;
 void invalidUpdate;
+void invalidUndefinedUpdate;
 void writePathTypeChecks;
 
 describe("preference type surface", () => {
