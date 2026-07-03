@@ -8,7 +8,9 @@
  */
 
 export { definePreferences } from "./define";
+export { jsonFileStore } from "./json-file-store";
 export { memoryStore } from "./memory-store";
+export { sqliteStore } from "./sqlite-store";
 export { t } from "../config/schema/builder";
 
 export {
@@ -17,6 +19,13 @@ export {
   PreferenceStoreError,
   PreferenceValidationError,
 } from "./errors";
+
+export type {
+  JsonFilePreferenceStore,
+  JsonFileStoreOptions,
+} from "./json-file-store";
+export type { MemoryPreferenceStore, MemoryStoreOptions } from "./memory-store";
+export type { SqlitePreferenceStore, SqliteStoreOptions } from "./sqlite-store";
 
 export type {
   DefinePreferencesOptions,
@@ -36,5 +45,3 @@ export type {
   PreferencesHandle,
   PreferenceValues,
 } from "./types";
-
-export type { MemoryPreferenceStore, MemoryStoreOptions } from "./memory-store";
