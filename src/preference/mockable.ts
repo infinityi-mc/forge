@@ -36,6 +36,8 @@ export function createMockablePreferenceValues<S extends PreferenceSchema>(
       if (typeof key !== "string" || !(key in schema)) {
         return (ref.current as Record<PropertyKey, unknown>)[key];
       }
+      // Pass the current root, not the ref: captured subtrees intentionally pin
+      // non-overridden leaves to their access-time snapshot.
       return readNode(schema[key]!, ref.current, [key]);
     },
     has(_target, key) {
@@ -47,6 +49,8 @@ export function createMockablePreferenceValues<S extends PreferenceSchema>(
     getOwnPropertyDescriptor(_target, key) {
       const desc = Object.getOwnPropertyDescriptor(ref.current as object, key);
       if (desc === undefined) return undefined;
+      // The proxy target is an empty object, so reflected snapshot keys are
+      // virtual and must be configurable to satisfy Proxy invariants.
       return { ...desc, configurable: true };
     },
     getPrototypeOf(_target) {

@@ -164,6 +164,7 @@ describe("definePreferences", () => {
 
     const prefs = await definePreferences(schema, {
       store,
+      version: 2,
       onDiagnostic: (diagnostic) => {
         received.push(diagnostic);
       },
@@ -175,6 +176,7 @@ describe("definePreferences", () => {
       status: "store_error",
       store: "bad-shape",
       received: null,
+      version: 2,
     });
     expect(prefs.diagnostics[0]!.reason).toContain("non-object snapshot");
     expect(received).toEqual([...prefs.diagnostics]);

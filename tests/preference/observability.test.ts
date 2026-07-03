@@ -127,6 +127,27 @@ describe("preference observability", () => {
     });
   });
 
+  test("external reloads without effective changes log at info", async () => {
+    const logger = recordingLogger();
+    const store = memoryStore({ "appearance.theme": "dark" });
+    const prefs = await definePreferences(schema, { store, logger });
+
+    store.replace({ "appearance.theme": "dark" });
+    await prefs.flush();
+
+    const reload = logger.lines.find(
+      (line) => line.msg === "Preferences externally reloaded",
+    );
+    expect(reload).toMatchObject({
+      level: "info",
+      attrs: {
+        module: "forge/preference",
+        store: "memory",
+        changed_keys: [],
+      },
+    });
+  });
+
   test("migration logs include from/to versions and applied hooks", async () => {
     const logger = recordingLogger();
     await definePreferences(schema, {

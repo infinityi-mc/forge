@@ -857,6 +857,7 @@ function invalidStoreSnapshotFallback(
         status: "store_error",
         reason: `Preference store '${scope.store.name}' returned a non-object snapshot.`,
         received,
+        version,
       }),
     ],
     loadedKeys: [],

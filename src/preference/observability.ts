@@ -79,7 +79,8 @@ export function emitPreferenceExternalReload(
   logger: Logger,
   summary: PreferenceExternalReloadSummary,
 ): void {
-  safeLog(logger, "warn", "Preferences externally reloaded", {
+  const level = summary.changedKeys.length === 0 ? "info" : "warn";
+  safeLog(logger, level, "Preferences externally reloaded", {
     module: MODULE_TAG,
     store: summary.store,
     ...(summary.scope === undefined ? {} : { scope: summary.scope }),
