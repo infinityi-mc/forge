@@ -13,7 +13,7 @@
  */
 
 import { diff } from "../config/dynamic/diff";
-import { createSnapshotProxy, type SnapshotRef } from "../config/dynamic/proxy";
+import type { SnapshotRef } from "../config/dynamic/proxy";
 import { isLeaf, type Leaf } from "../config/schema/types";
 import { collectLeaves, deepFreeze } from "../config/schema/walk";
 import type { ConfigSchema } from "../config/types";
@@ -22,6 +22,13 @@ import {
   PreferenceStoreError,
   PreferenceValidationError,
 } from "./errors";
+import { createMockablePreferenceValues } from "./mockable";
+import {
+  emitPreferenceExternalReload,
+  emitPreferenceLoadSummary,
+  emitPreferenceMigration,
+  emitPreferenceSave,
+} from "./observability";
 import { cloneStoreSnapshot, setSnapshotValue } from "./store-snapshot";
 import type {
   DefinePreferencesBaseOptions,
@@ -82,11 +89,33 @@ interface PreparedScopeSnapshot {
   readonly preserved: PreferenceSnapshot;
   readonly version: number | undefined;
   readonly diagnostics: readonly PreferenceDiagnostic[];
+  readonly loadedKeys: readonly string[];
+  readonly fallbackKeys: readonly string[];
+  readonly migration?: AppliedMigration;
 }
 
 interface SplitSnapshot {
   readonly known: PreferenceSnapshot;
   readonly unknown: PreferenceSnapshot;
+}
+
+interface AppliedMigration {
+  readonly fromVersion: number;
+  readonly toVersion: number;
+  readonly versions: readonly number[];
+}
+
+interface MigrationResult {
+  readonly snapshot: PreferenceSnapshot;
+  readonly version: number | undefined;
+  readonly fromVersion?: number;
+  readonly appliedVersions: readonly number[];
+}
+
+interface MergedScopeApplyResult<S extends PreferenceSchema> {
+  readonly loadedKeys: readonly string[];
+  readonly fallbackKeys: readonly string[];
+  readonly changedKeys: readonly PreferencePath<S>[];
 }
 
 export async function definePreferences<S extends PreferenceSchema>(
@@ -107,9 +136,11 @@ export async function definePreferences<
   schema: S,
   options: DefinePreferencesOptions<Scopes>,
 ): Promise<PreferencesHandle<S, PreferenceScopeName<Scopes>>> {
+  const startedAt = performance.now();
   assertPreferenceSchema(schema);
 
   const diagnostics: PreferenceDiagnostic[] = [];
+  const loadFallbackKeys: string[] = [];
   const leafEntries = collectLeaves(schema as unknown as ConfigSchema);
   const leafPaths = leafEntries.map((entry) => entry.path);
   assertNoReservedPreferencePath(leafPaths);
@@ -134,6 +165,7 @@ export async function definePreferences<
       .map((scope) => [scope.diagnosticScope!, scope]),
   );
   const defaultWriteScope = scopeStates.at(-1)!;
+  const logger = options.logger;
 
   for (const scope of scopeStates) {
     let loaded: PreferenceSnapshot | undefined;
@@ -162,6 +194,18 @@ export async function definePreferences<
     scope.preserved = cloneSnapshot(prepared.preserved);
     scope.version = prepared.version;
     diagnostics.push(...prepared.diagnostics);
+    loadFallbackKeys.push(...prepared.fallbackKeys);
+    if (logger !== undefined && prepared.migration !== undefined) {
+      emitPreferenceMigration(logger, {
+        store: scope.store.name,
+        ...(scope.diagnosticScope === undefined
+          ? {}
+          : { scope: scope.diagnosticScope }),
+        fromVersion: prepared.migration.fromVersion,
+        toVersion: prepared.migration.toVersion,
+        migrationVersions: prepared.migration.versions,
+      });
+    }
   }
 
   const initial = validatePreferenceSnapshot(
@@ -172,6 +216,21 @@ export async function definePreferences<
 
   await emitDiagnostics(diagnostics, options.onDiagnostic);
 
+  if (logger !== undefined) {
+    emitPreferenceLoadSummary(logger, {
+      loadTimeMs: Math.round(performance.now() - startedAt),
+      stores: scopeStates.map((scope) => scope.store.name),
+      scopes: scopeStates.map((scope) => ({
+        store: scope.store.name,
+        ...(scope.diagnosticScope === undefined
+          ? {}
+          : { scope: scope.diagnosticScope }),
+      })),
+      loadedKeys: initial.loadedKeys,
+      fallbackKeys: uniqueSorted([...initial.fallbackKeys, ...loadFallbackKeys]),
+    });
+  }
+
   let currentEffectiveExplicit = cloneSnapshot(initial.explicit);
   const ref: SnapshotRef<PreferenceValues<S>> = {
     current: deepFreeze(initial.tree),
@@ -180,10 +239,10 @@ export async function definePreferences<
   let shutDown = false;
   let writeQueue: Promise<void> = Promise.resolve();
 
-  const values = createSnapshotProxy(ref as SnapshotRef<object>, {
+  const values = createMockablePreferenceValues(schema, ref, {
     namespace: "forge/preference",
     mutationHint: "preference values are read-only; use set/update/reset.",
-  }) as PreferenceValues<S>;
+  });
 
   const addDiagnostics = (nextDiagnostics: readonly PreferenceDiagnostic[]) => {
     if (nextDiagnostics.length === 0) return;
@@ -191,7 +250,9 @@ export async function definePreferences<
     void emitDiagnostics(nextDiagnostics, options.onDiagnostic);
   };
 
-  const applyMergedScopes = (): void => {
+  const applyMergedScopes = (
+    fallbackKeys: readonly string[] = [],
+  ): MergedScopeApplyResult<S> => {
     const result = validatePreferenceSnapshot(
       schema,
       mergeScopeExplicitSnapshots(scopeStates),
@@ -206,10 +267,25 @@ export async function definePreferences<
       previous,
       nextValues,
     ) as PreferencePath<S>[];
-    if (changedKeys.length === 0) return;
+    const mergedFallbackKeys = uniqueSorted([
+      ...result.fallbackKeys,
+      ...fallbackKeys,
+    ]);
+    if (changedKeys.length === 0) {
+      return {
+        loadedKeys: result.loadedKeys,
+        fallbackKeys: mergedFallbackKeys,
+        changedKeys,
+      };
+    }
 
     ref.current = nextValues;
     notifySubscribers(subscribers, previous, ref.current, changedKeys);
+    return {
+      loadedKeys: result.loadedKeys,
+      fallbackKeys: mergedFallbackKeys,
+      changedKeys,
+    };
   };
 
   const enqueueStateChange = (
@@ -237,7 +313,30 @@ export async function definePreferences<
       scope.preserved = cloneSnapshot(prepared.preserved);
       scope.version = prepared.version;
       addDiagnostics(prepared.diagnostics);
-      applyMergedScopes();
+      const applied = applyMergedScopes(prepared.fallbackKeys);
+      if (logger !== undefined && prepared.migration !== undefined) {
+        emitPreferenceMigration(logger, {
+          store: scope.store.name,
+          ...(scope.diagnosticScope === undefined
+            ? {}
+            : { scope: scope.diagnosticScope }),
+          fromVersion: prepared.migration.fromVersion,
+          toVersion: prepared.migration.toVersion,
+          migrationVersions: prepared.migration.versions,
+        });
+      }
+      if (logger !== undefined) {
+        emitPreferenceExternalReload(logger, {
+          store: scope.store.name,
+          ...(scope.diagnosticScope === undefined
+            ? {}
+            : { scope: scope.diagnosticScope }),
+          loadedKeys: applied.loadedKeys,
+          fallbackKeys: applied.fallbackKeys,
+          changedKeys: applied.changedKeys,
+          ...(scope.version === undefined ? {} : { version: scope.version }),
+        });
+      }
     });
   };
 
@@ -292,6 +391,17 @@ export async function definePreferences<
       throw new PreferenceStoreError(storeErrorReason(scope, "save", err), {
         cause: err,
         store: scope.store.name,
+      });
+    }
+
+    if (logger !== undefined) {
+      emitPreferenceSave(logger, {
+        store: scope.store.name,
+        ...(scope.diagnosticScope === undefined
+          ? {}
+          : { scope: scope.diagnosticScope }),
+        savedKeys: Object.keys(result.explicit).sort(),
+        ...(scope.version === undefined ? {} : { version: scope.version }),
       });
     }
 
@@ -511,6 +621,7 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
 
   let migrated: PreferenceSnapshot;
   let version = versionResult.version;
+  let migration: AppliedMigration | undefined;
   try {
     const migrationResult = await runMigrations(
       withoutVersion,
@@ -519,6 +630,7 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     );
     migrated = migrationResult.snapshot;
     version = migrationResult.version;
+    migration = migrationResultToAppliedMigration(migrationResult);
   } catch (err) {
     return migrationFallback(scope, leafPathSet, withoutVersion, {
       status: "migration_error",
@@ -536,6 +648,9 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
     diagnostics: validated.diagnostics.map((diagnostic) =>
       scopeDiagnostic(scope, diagnostic),
     ),
+    loadedKeys: validated.loadedKeys,
+    fallbackKeys: validated.fallbackKeys,
+    migration,
   };
 }
 
@@ -654,17 +769,26 @@ async function runMigrations(
   snapshot: PreferenceSnapshot,
   storedVersion: number | undefined,
   versioning: VersioningOptions,
-): Promise<{ readonly snapshot: PreferenceSnapshot; readonly version: number | undefined }> {
+): Promise<MigrationResult> {
   const currentVersion = versioning.currentVersion;
   if (currentVersion === undefined) {
-    return { snapshot: cloneSnapshot(snapshot), version: storedVersion };
+    return {
+      snapshot: cloneSnapshot(snapshot),
+      version: storedVersion,
+      appliedVersions: [],
+    };
   }
   if (storedVersion !== undefined && storedVersion > currentVersion) {
-    return { snapshot: cloneSnapshot(snapshot), version: storedVersion };
+    return {
+      snapshot: cloneSnapshot(snapshot),
+      version: storedVersion,
+      appliedVersions: [],
+    };
   }
 
   let next = cloneSnapshot(snapshot);
   const fromVersion = storedVersion ?? 1;
+  const appliedVersions: number[] = [];
   for (let version = fromVersion + 1; version <= currentVersion; version += 1) {
     const migration = versioning.migrations.get(version);
     if (migration === undefined) continue;
@@ -675,8 +799,28 @@ async function runMigrations(
       );
     }
     next = snapshotWithoutKey(cloneSnapshot(migrated), VERSION_KEY);
+    appliedVersions.push(version);
   }
-  return { snapshot: next, version: currentVersion };
+  return {
+    snapshot: next,
+    version: currentVersion,
+    fromVersion,
+    appliedVersions,
+  };
+}
+
+function migrationResultToAppliedMigration(
+  result: MigrationResult,
+): AppliedMigration | undefined {
+  if (result.appliedVersions.length === 0) return undefined;
+  if (result.fromVersion === undefined || result.version === undefined) {
+    return undefined;
+  }
+  return {
+    fromVersion: result.fromVersion,
+    toVersion: result.version,
+    versions: result.appliedVersions,
+  };
 }
 
 function migrationFallback(
@@ -690,6 +834,8 @@ function migrationFallback(
     preserved: splitSnapshot(snapshot, leafPathSet).unknown,
     version: diagnostic.version,
     diagnostics: [scopeDiagnostic(scope, diagnostic)],
+    loadedKeys: [],
+    fallbackKeys: [],
   };
 }
 
@@ -873,6 +1019,10 @@ function scopeValidationError(scope: string): PreferenceValidationError {
       },
     ],
   });
+}
+
+function uniqueSorted(values: readonly string[]): readonly string[] {
+  return [...new Set(values)].sort();
 }
 
 function hasOwn(object: PreferenceSnapshot, key: string): boolean {

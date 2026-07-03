@@ -9,6 +9,7 @@ import type {
   Leaf,
   OptionalLeaf,
 } from "../config/schema/types";
+import type { Logger } from "../config/logger";
 
 /** A leaf that can always fall back safely on the preference read path. */
 export type PreferenceLeaf = DefaultedLeaf<unknown> | OptionalLeaf<unknown>;
@@ -131,6 +132,8 @@ export interface DefinePreferencesBaseOptions {
   readonly version?: number;
   /** Ordered migrations keyed by target version. */
   readonly migrations?: Readonly<Record<number, PreferenceMigration>>;
+  /** Optional structured logger. Emits structural paths/metadata, never values. */
+  readonly logger?: Logger;
   readonly onDiagnostic?: (
     diagnostic: PreferenceDiagnostic,
   ) => void | Promise<void>;

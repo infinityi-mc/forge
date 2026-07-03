@@ -18,5 +18,7 @@ describe("preference exports", () => {
   test("testing entrypoint exposes store conformance helpers", () => {
     expect(preferenceTesting.assertPreferenceStoreConformance).toBeFunction();
     expect(preferenceTesting.STANDARD_PREFERENCE_STORE_SCENARIOS).toBeArray();
+    expect(preferenceTesting.memoryStore).toBeFunction();
+    expect(preferenceTesting.mockPreferences).toBeFunction();
   });
 });

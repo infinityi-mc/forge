@@ -9,16 +9,17 @@ This file collects practical use cases for `@infinityi/forge`, ordered from simp
 | Level | Use case | Modules covered |
 | ---: | --- | --- |
 | 1 | Validate boot-time configuration | `config` |
-| 2 | Emit structured logs, metrics, and traces | `telemetry` |
-| 3 | Wrap flaky I/O with retries and timeouts | `resilience` |
-| 4 | Call another service with a resilient HTTP client | `http`, `resilience` |
-| 5 | Build a small HTTP API with Problem Details | `http` |
-| 6 | Query SQL explicitly without an ORM | `data` |
-| 7 | Publish and consume messages reliably | `messaging`, `resilience` |
-| 8 | Authenticate and authorize routes | `security`, `http` |
-| 9 | Run background jobs | `messaging` |
-| 10 | Boot and shut down a service gracefully | `lifecycle`, `http`, `data`, `messaging`, `telemetry` |
-| 11 | Atomic business write plus event publication | `data`, `messaging`, `lifecycle` |
+| 2 | Persist user-owned runtime preferences | `preference` |
+| 3 | Emit structured logs, metrics, and traces | `telemetry` |
+| 4 | Wrap flaky I/O with retries and timeouts | `resilience` |
+| 5 | Call another service with a resilient HTTP client | `http`, `resilience` |
+| 6 | Build a small HTTP API with Problem Details | `http` |
+| 7 | Query SQL explicitly without an ORM | `data` |
+| 8 | Publish and consume messages reliably | `messaging`, `resilience` |
+| 9 | Authenticate and authorize routes | `security`, `http` |
+| 10 | Run background jobs | `messaging` |
+| 11 | Boot and shut down a service gracefully | `lifecycle`, `http`, `data`, `messaging`, `telemetry` |
+| 12 | Atomic business write plus event publication | `data`, `messaging`, `lifecycle` |
 
 ---
 
@@ -87,7 +88,60 @@ if (flags.values.features.maintenanceMode) {
 
 ---
 
-## 2. Emit structured logs, metrics, and traces
+## 2. Persist user-owned runtime preferences
+
+Use `forge/preference` for settings that end users change at runtime. Reads are fail-safe: corrupt or stale stored values fall back per leaf instead of crashing the app.
+
+```ts
+import {
+  definePreferences,
+  jsonFileStore,
+  t,
+} from "@infinityi/forge/preference";
+import { mockPreferences } from "@infinityi/forge/preference/testing";
+
+const prefs = await definePreferences(
+  {
+    appearance: {
+      theme: t.enum(["light", "dark", "system"] as const).default("system"),
+      fontSize: t.number.int.default(14),
+    },
+    editor: {
+      autosave: t.boolean.default(true),
+      recentFiles: t.json<readonly string[]>().default([]),
+    },
+  },
+  {
+    store: jsonFileStore({ path: "./preferences.json", debounceMs: 250 }),
+    version: 2,
+    migrations: {
+      2: (raw) => ({
+        ...raw,
+        "editor.autosave": raw["editor.autoSave"] ?? raw["editor.autosave"],
+      }),
+    },
+    logger: console,
+  },
+);
+
+await prefs.set("appearance.theme", "dark");
+await prefs.reset("appearance.fontSize");
+
+prefs.values.appearance.theme; // "dark"
+prefs.isSet("appearance.fontSize"); // false
+
+await mockPreferences({ appearance: { theme: "light" } }, async () => {
+  prefs.values.appearance.theme; // "light" only in this async scope
+});
+
+await prefs.shutdown();
+```
+
+For layered preferences, pass `scopes: { user, workspace }`; later scopes win and unscoped writes target the highest-precedence scope.
+
+---
+
+## 3. Emit structured logs, metrics, and traces
 
 Use `initTelemetry` when a service wants consistent logging, metrics, and tracing behind one shutdown handle.
 
@@ -142,7 +196,7 @@ await withRootContext({ baggage: { tenantId: "acme" } }, async () => {
 
 ---
 
-## 3. Wrap flaky I/O with retries and timeouts
+## 4. Wrap flaky I/O with retries and timeouts
 
 Use `forge/resilience` when calling a dependency that can be slow or transiently unavailable. Always pass `ctx.signal` into cooperative I/O so timeouts cancel real work.
 
@@ -188,7 +242,7 @@ if (result.isOk()) {
 
 ---
 
-## 4. Call another service with a resilient HTTP client
+## 5. Call another service with a resilient HTTP client
 
 Use `forge/http` client when you want `fetch` ergonomics plus defaults for base URL, headers, timeouts, resilience, telemetry, and RFC 7807 errors.
 
@@ -221,7 +275,7 @@ const { body: charge } = await payments.post<{ id: string; status: "authorized" 
 
 ---
 
-## 5. Build a small HTTP API with Problem Details
+## 6. Build a small HTTP API with Problem Details
 
 Use `forge/http` server when you need a thin `Bun.serve()` router with middleware, route params, request validation, OpenAPI metadata, and RFC 7807 error responses.
 
@@ -297,7 +351,7 @@ const server = serve(router, { port: 3000 });
 
 ---
 
-## 6. Query SQL explicitly without an ORM
+## 7. Query SQL explicitly without an ORM
 
 Use `forge/data` for typed SQL query builders, raw SQL, transactions, tenant-scoped handles, and connection lifecycle hooks.
 
@@ -372,7 +426,7 @@ await db.uow(async (tx) => {
 
 ---
 
-## 7. Publish and consume messages reliably
+## 8. Publish and consume messages reliably
 
 Use `forge/messaging` for asynchronous work. Delivery is at-least-once by design; add an inbox store for idempotency and a dead-letter store for poison messages.
 
@@ -417,7 +471,7 @@ const parked = await deadLetter.list({ limit: 10 });
 
 ---
 
-## 8. Authenticate and authorize routes
+## 9. Authenticate and authorize routes
 
 Use `forge/security` when routes need token verification, declarative authorization, and audit logging. The middleware is structural, so it mounts into `forge/http` without either module owning the other.
 
@@ -507,7 +561,7 @@ const fingerprint = apiKeyFingerprint("fk_live_example_key_value_32_chars_min");
 
 ---
 
-## 9. Run background jobs
+## 10. Run background jobs
 
 Use `forge/messaging/jobs` for local or durable background work: enqueue now, schedule for later, or register recurring jobs.
 
@@ -547,7 +601,7 @@ await queue.every("report.daily", 86_400_000);
 
 ---
 
-## 10. Boot and shut down a service gracefully
+## 11. Boot and shut down a service gracefully
 
 Use `forge/lifecycle` when multiple resources must start in dependency order and stop in reverse order under a shutdown budget. This is the typical production shape for an HTTP service with a database, message consumer, health probes, and telemetry.
 
@@ -598,7 +652,7 @@ await app.done;
 
 ---
 
-## 11. Atomic business write plus event publication
+## 12. Atomic business write plus event publication
 
 This is the most production-oriented messaging use case: write business state and an outbox row in the same `forge/data` transaction, then let a `forge/messaging` relay publish rows to a durable transport. Consumers use inbox deduplication to tolerate at-least-once delivery.
 

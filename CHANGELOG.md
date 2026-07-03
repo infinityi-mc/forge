@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added structured `forge/preference` observability for load, save, external reload, and migration events.
+- Added `mockPreferences` and `memoryStore` to `forge/preference/testing` for async-scoped preference tests.
+- Added `forge/preference` documentation and examples covering stores, scopes, migrations, observability, and testing.
+
 ## 1.0.1 - 2026-06-12
 
 ### Added
