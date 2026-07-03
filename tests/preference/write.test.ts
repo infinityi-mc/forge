@@ -322,6 +322,30 @@ describe("definePreferences write path", () => {
     });
   });
 
+  test("external non-object snapshots fall back safely", async () => {
+    const diagnostics: PreferenceDiagnostic[] = [];
+    const store = memoryStore({ "appearance.theme": "light" });
+    const prefs = await definePreferences(schema, {
+      store,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    });
+
+    store.replace(null as never);
+    await prefs.flush();
+
+    expect(prefs.values.appearance.theme).toBe("system");
+    expect(prefs.isSet("appearance.theme")).toBe(false);
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        status: "store_error",
+        store: "memory",
+        received: null,
+      }),
+    );
+  });
+
   test("flush, shutdown, and async dispose delegate to the store idempotently", async () => {
     let flushes = 0;
     let shutdowns = 0;

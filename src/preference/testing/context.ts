@@ -30,7 +30,21 @@ export function runWithPreferenceOverride<T>(
   fn: () => T | Promise<T>,
 ): T | Promise<T> {
   const current = overrideStorage.getStore() ?? [];
-  return overrideStorage.run([...current, overrides], fn);
+  const normalized = cloneOverride(overrides) as UnknownRecord;
+  return overrideStorage.run([...current, normalized], fn);
+}
+
+function cloneOverride(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => cloneOverride(item)));
+  }
+  if (!isPlainRecord(value)) return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    out[key] = cloneOverride(child);
+  }
+  return Object.freeze(out);
 }
 
 function getOverride(
@@ -74,4 +88,11 @@ function getAtPathIfOwn(
 
 function isRecord(value: unknown): value is UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPlainRecord(value: unknown): value is UnknownRecord {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }

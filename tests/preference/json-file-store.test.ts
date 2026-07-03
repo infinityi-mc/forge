@@ -239,6 +239,30 @@ describe("jsonFileStore", () => {
       }
     });
   });
+
+  test("opt-in watch ignores unrelated files with overlapping prefixes", async () => {
+    await withTempDir(async (dir) => {
+      const file = join(dir, "prefs.json");
+      const lines: string[] = [];
+      const prefs = await definePreferences(schema, {
+        store: jsonFileStore({ path: file, watch: true, watchDebounceMs: 5 }),
+        logger: {
+          info: (msg) => lines.push(msg),
+          warn: (msg) => lines.push(msg),
+          error: (msg) => lines.push(msg),
+        },
+      });
+      const initialLines = lines.length;
+
+      await Bun.write(`${file}.bak`, "{}\n");
+      await sleep(75);
+
+      expect(lines.slice(initialLines)).not.toContain(
+        "Preferences externally reloaded",
+      );
+      await prefs.shutdown();
+    });
+  });
 });
 
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {

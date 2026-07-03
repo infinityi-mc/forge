@@ -606,9 +606,13 @@ async function prepareScopeSnapshot<S extends PreferenceSchema>(
   schema: S,
   leafPathSet: ReadonlySet<string>,
   scope: ScopeDefinition,
-  snapshot: PreferenceSnapshot,
+  snapshot: unknown,
   versioning: VersioningOptions,
 ): Promise<PreparedScopeSnapshot> {
+  if (!isPlainRecord(snapshot)) {
+    return invalidStoreSnapshotFallback(scope, versioning.currentVersion, snapshot);
+  }
+
   const cloned = cloneSnapshot(snapshot);
   const versionResult = readSnapshotVersion(cloned, versioning.currentVersion);
   const withoutVersion = snapshotWithoutKey(cloned, VERSION_KEY);
@@ -834,6 +838,27 @@ function migrationFallback(
     preserved: splitSnapshot(snapshot, leafPathSet).unknown,
     version: diagnostic.version,
     diagnostics: [scopeDiagnostic(scope, diagnostic)],
+    loadedKeys: [],
+    fallbackKeys: [],
+  };
+}
+
+function invalidStoreSnapshotFallback(
+  scope: ScopeDefinition,
+  version: number | undefined,
+  received: unknown,
+): PreparedScopeSnapshot {
+  return {
+    explicit: {},
+    preserved: {},
+    version,
+    diagnostics: [
+      scopeDiagnostic(scope, {
+        status: "store_error",
+        reason: `Preference store '${scope.store.name}' returned a non-object snapshot.`,
+        received,
+      }),
+    ],
     loadedKeys: [],
     fallbackKeys: [],
   };

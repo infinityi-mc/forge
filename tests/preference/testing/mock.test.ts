@@ -129,6 +129,26 @@ describe("mockPreferences", () => {
     );
   });
 
+  test("mocked object-like leaf values are frozen clones", async () => {
+    const prefs = await definePreferences(schema, { store: memoryStore() });
+    const recentFiles = ["a.ts"];
+
+    await mockPreferences<AppPreferences, void>(
+      { editor: { recentFiles } },
+      async () => {
+        recentFiles.push("outside.ts");
+        const mocked = prefs.values.editor.recentFiles;
+
+        expect(mocked).toEqual(["a.ts"]);
+        expect(Object.isFrozen(mocked)).toBe(true);
+        expect(() => {
+          (mocked as string[]).push("b.ts");
+        }).toThrow(TypeError);
+        expect(prefs.values.editor.recentFiles).toEqual(["a.ts"]);
+      },
+    );
+  });
+
   test("captured mocked subtrees pin non-overridden leaves", async () => {
     const prefs = await definePreferences(schema, { store: memoryStore() });
 

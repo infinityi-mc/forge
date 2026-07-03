@@ -154,6 +154,32 @@ describe("definePreferences", () => {
     expect(received).toEqual([...prefs.diagnostics]);
   });
 
+  test("non-object store snapshots fall back to defaults with diagnostics", async () => {
+    const received: PreferenceDiagnostic[] = [];
+    const store: PreferenceStore = {
+      name: "bad-shape",
+      load: async () => null as never,
+      save: async () => {},
+    };
+
+    const prefs = await definePreferences(schema, {
+      store,
+      onDiagnostic: (diagnostic) => {
+        received.push(diagnostic);
+      },
+    });
+
+    expect(prefs.values.appearance.theme).toBe("system");
+    expect(prefs.diagnostics).toHaveLength(1);
+    expect(prefs.diagnostics[0]).toMatchObject({
+      status: "store_error",
+      store: "bad-shape",
+      received: null,
+    });
+    expect(prefs.diagnostics[0]!.reason).toContain("non-object snapshot");
+    expect(received).toEqual([...prefs.diagnostics]);
+  });
+
   test("onDiagnostic failures are isolated", async () => {
     const prefs = await definePreferences(schema, {
       store: memoryStore({ "appearance.theme": "neon" }),
