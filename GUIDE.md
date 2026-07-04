@@ -818,15 +818,15 @@ const healthServer = startHealthServer(probe, { port: 9000 });
 
 // Option B: mount on your existing router
 const routes = healthRoutes(probe);
-router.get("/healthz", routes.liveness);
-router.get("/readyz", routes.readiness);
+router.get(routes.livenessPath, (req) => routes.handle(req));
+router.get(routes.readinessPath, (req) => routes.handle(req));
 ```
 
 **Endpoints**
 
 | Path | Description |
 |------|-------------|
-| `GET /healthz` | Liveness — always 200 if process is alive |
+| `GET /livez` | Liveness — always 200 if process is alive |
 | `GET /readyz` | Readiness — 200 only when all checks pass |
 
 ### Signal Handling
@@ -835,7 +835,7 @@ router.get("/readyz", routes.readiness);
 import { installSignalHandlers } from "@infinityi/forge/lifecycle";
 
 installSignalHandlers({
-  onShutdown: () => app.stop(),
+  onSignal: (signal) => app.stop(signal),
   signals: ["SIGTERM", "SIGINT"],
 });
 ```
