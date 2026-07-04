@@ -7,6 +7,7 @@ import {
   databaseComponent,
   httpServerComponent,
   messageBusComponent,
+  preferenceComponent,
   poolComponent,
   relayComponent,
   telemetryComponent,
@@ -92,6 +93,39 @@ describe("configComponent", () => {
     expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
       status: "degraded",
       detail: "provider lag",
+    });
+  });
+});
+
+describe("preferenceComponent", () => {
+  test("stops preferences by calling shutdown exactly once and has no start hook", async () => {
+    const calls: string[] = [];
+    const c = preferenceComponent("preferences", {
+      shutdown: () => {
+        calls.push("shutdown");
+      },
+    });
+
+    expect(c.start).toBeUndefined();
+
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+
+    expect(calls).toEqual(["shutdown"]);
+  });
+
+  test("no healthcheck is derived by default", () => {
+    const c = preferenceComponent("preferences", { shutdown: () => {} });
+    expect(c.healthcheck).toBeUndefined();
+  });
+
+  test("a custom healthcheck overrides the absent derived one", async () => {
+    const c = preferenceComponent("preferences", { shutdown: () => {} }, {
+      healthcheck: () => ({ status: "degraded", detail: "store lag" }),
+    });
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "store lag",
     });
   });
 });
