@@ -22,6 +22,9 @@ export function healthRoutes(
 ): HealthRoutes {
   const livenessPath = options.livenessPath ?? DEFAULT_LIVENESS_PATH;
   const readinessPath = options.readinessPath ?? DEFAULT_READINESS_PATH;
+  if (livenessPath === readinessPath) {
+    throw new Error("livenessPath and readinessPath must be distinct");
+  }
 
   async function handle(request: Request): Promise<Response | undefined> {
     const path = new URL(request.url).pathname;

@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.2.1 - 2026-07-04
+
+### Fixed
+
+- Hardened lifecycle shutdown during startup so components that finish starting after a shutdown signal are still stopped before shutdown completes.
+- Ensured startup rollback drains the started component list before any pending shutdown resumes, preventing duplicate component cleanup.
+- Ensured `app.done` resolves only after shutdown cleanup and exit bookkeeping complete.
+- Isolated lifecycle health and signal cleanup failures so they are logged without hiding the original startup or shutdown result.
+- De-duplicated configured lifecycle signal handlers so duplicate signal names do not install leaked listeners or force premature exits.
+- Rejected identical lifecycle health liveness/readiness paths so readiness cannot be shadowed by liveness.
+- Ran readiness health checks concurrently under their per-check timeouts to avoid latency scaling linearly with check count.
+- Removed an abort-listener leak in `realClock.sleep()`.
+
+### Changed
+
+- Updated lifecycle guide health-route and signal-handler examples to match the current `healthRoutes().handle()` and `installSignalHandlers({ onSignal })` APIs.
+
+### Compatibility
+
+- No breaking API changes are expected. The changes tighten lifecycle cleanup behavior and validation around ambiguous health route configuration.
+
+## 1.2.0 - 2026-07-04
+
+### Added
+
+- Added first-class lifecycle adapters for additional Forge modules: `telemetryComponent()`, `configComponent()`, `preferenceComponent()`, and `securityComponent()`.
+- Added structural adapter seams for telemetry, dynamic config, preferences, and security JWKS health without hard imports from sibling modules.
+- Added lifecycle adapter tests covering shutdown delegation, healthcheck passthrough, derived security health, and security degraded-readiness behavior.
+
+### Changed
+
+- Updated lifecycle, README, and guide examples to prefer first-class lifecycle adapters over local `asComponent` boilerplate where Forge primitives already match an official adapter.
+- Updated security guide examples to use the current JWKS key-store option names and lifecycle component shapes.
+
+### Compatibility
+
+- No breaking API changes are expected. The new adapters are additive exports from `forge/lifecycle` and `forge/lifecycle/adapters`.
+
 ## 1.1.0 - 2026-07-04
 
 ### Added

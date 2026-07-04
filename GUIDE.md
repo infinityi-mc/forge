@@ -678,19 +678,18 @@ import {
 Start components in order, fail-fast with rollback, graceful shutdown.
 
 ```ts
-import { forge, asComponent } from "@infinityi/forge/lifecycle";
+import {
+  forge,
+  databaseComponent,
+  httpServerComponent,
+} from "@infinityi/forge/lifecycle";
+
+const server = serve(router, { port: 3000 });
 
 const app = await forge.boot({
   components: [
-    asComponent("db", {
-      start: () => db.ping(),
-      stop: () => db.shutdown(),
-      healthcheck: () => db.ping(),
-    }),
-    asComponent("http", {
-      start: () => { server = serve({ router, port: 3000 }); },
-      stop: () => server.stop(),
-    }),
+    databaseComponent("db", db),
+    httpServerComponent("http", server),
   ],
   shutdownTimeout: 30_000,
   startTimeout: 15_000,
@@ -748,17 +747,38 @@ Pre-built components for common Forge primitives:
 
 ```ts
 import {
+  telemetryComponent,
+  configComponent,
+  preferenceComponent,
+  securityComponent,
   databaseComponent,
+  poolComponent,
   httpServerComponent,
   messageBusComponent,
   consumerComponent,
-  poolComponent,
   relayComponent,
   workerComponent,
+  circuitBreakerComponent,
+  bulkheadComponent,
 } from "@infinityi/forge/lifecycle";
 
+// Telemetry adapter: stop() → telemetry.shutdown()
+telemetryComponent("telemetry", telemetry);
+
+// Dynamic config adapter: stop() → dynamicConfig.shutdown()
+configComponent("dynamic-config", flags);
+
+// Preference adapter: stop() → prefs.shutdown()
+preferenceComponent("preferences", prefs);
+
+// Security adapter: healthcheck() mirrors KeyStore.health()
+securityComponent("security.jwks", keyStore, { degraded: true });
+
 // Database adapter
-databaseComponent("db", db, { healthcheck: true });
+databaseComponent("db", db);
+
+// Pool adapter
+poolComponent("pg-pool", pool);
 
 // HTTP server adapter
 httpServerComponent("api", server);
@@ -769,14 +789,15 @@ messageBusComponent("events", bus);
 // Consumer adapter
 consumerComponent("order-handler", consumer);
 
-// Pool adapter
-poolComponent("pg-pool", pool);
-
 // Outbox relay adapter
 relayComponent("outbox", relay);
 
 // Background worker adapter
 workerComponent("jobs", worker);
+
+// Resilience readiness adapters
+circuitBreakerComponent("payments-breaker", breaker);
+bulkheadComponent("payments-bulkhead", bulkhead);
 ```
 
 ### Health Probes
@@ -797,15 +818,15 @@ const healthServer = startHealthServer(probe, { port: 9000 });
 
 // Option B: mount on your existing router
 const routes = healthRoutes(probe);
-router.get("/healthz", routes.liveness);
-router.get("/readyz", routes.readiness);
+router.get(routes.livenessPath, (req) => routes.handle(req));
+router.get(routes.readinessPath, (req) => routes.handle(req));
 ```
 
 **Endpoints**
 
 | Path | Description |
 |------|-------------|
-| `GET /healthz` | Liveness — always 200 if process is alive |
+| `GET /livez` | Liveness — always 200 if process is alive |
 | `GET /readyz` | Readiness — 200 only when all checks pass |
 
 ### Signal Handling
@@ -814,7 +835,7 @@ router.get("/readyz", routes.readiness);
 import { installSignalHandlers } from "@infinityi/forge/lifecycle";
 
 installSignalHandlers({
-  onShutdown: () => app.stop(),
+  onSignal: (signal) => app.stop(signal),
   signals: ["SIGTERM", "SIGINT"],
 });
 ```
@@ -1473,11 +1494,12 @@ import {
 Verify JWT tokens and extract a `Principal`.
 
 ```ts
+import { Secret } from "@infinityi/forge/config";
 import { createJwtVerifier } from "@infinityi/forge/security";
 import { hmacKeyStore } from "@infinityi/forge/security";
 
 const verifier = createJwtVerifier({
-  keyStore: hmacKeyStore({ secret: process.env.JWT_SECRET! }),
+  keyStore: hmacKeyStore(new Secret(process.env.JWT_SECRET!)),
   issuer: "https://auth.example.com",
   audience: "my-api",
   algorithms: ["HS256"],
@@ -1537,19 +1559,19 @@ const principal = await verifier.verify(key);
 ### Key Stores (JWKS)
 
 ```ts
+import { Secret } from "@infinityi/forge/config";
 import { createJwksKeyStore, hmacKeyStore, staticKeyStore } from "@infinityi/forge/security";
 
 // HMAC (symmetric)
-const ks = hmacKeyStore({ secret: "my-secret" });
+const hmacKeys = hmacKeyStore(new Secret("my-secret"));
 
 // Static JWK set
-const ks = staticKeyStore({ keys: [jwk1, jwk2] });
+const staticKeys = staticKeyStore({ keys: [jwk1, jwk2] });
 
 // Remote JWKS with caching + rotation
-const ks = createJwksKeyStore({
-  url: "https://auth.example.com/.well-known/jwks.json",
-  cache: { ttlMs: 600_000, staleWhileRevalidate: true },
-  resilience: pipeline, // @infinityi/forge/resilience pipeline
+const jwksKeys = createJwksKeyStore({
+  jwksUri: "https://auth.example.com/.well-known/jwks.json",
+  cache: { ttlMs: 600_000, resilience: pipeline },
 });
 ```
 
@@ -1611,12 +1633,13 @@ router
 ### Audit Logging
 
 ```ts
+import { Secret } from "@infinityi/forge/config";
 import { createAuditLogger, logSink, memorySink, verifyAuditChain } from "@infinityi/forge/security";
 
 const audit = createAuditLogger({
   sink: logSink({ logger }),
   tamperEvident: true,
-  signingSecret: "hmac-key",
+  signingSecret: new Secret("hmac-key"),
   redact: ["metadata.creditCard"],
   correlation: () => requestId,
 });
@@ -1630,7 +1653,9 @@ await audit.record({
 });
 
 // Verify tamper-evident chain
-const result = await verifyAuditChain(events, { signingSecret: "hmac-key" });
+const result = await verifyAuditChain(events, {
+  signingSecret: new Secret("hmac-key"),
+});
 // result.valid → boolean
 ```
 
@@ -1646,16 +1671,21 @@ const result = await verifyAuditChain(events, { signingSecret: "hmac-key" });
 | `clock` | `Clock` | Override for tests |
 | `correlation` | `() => string` | Correlation ID generator |
 
-### Security Health Component
+### Security Lifecycle Components
 
 ```ts
 import { securityHealthComponent } from "@infinityi/forge/security";
+import { securityComponent } from "@infinityi/forge/lifecycle";
 
-const healthComp = securityHealthComponent({
-  keyStore: jwksKeyStore,
-  checkIntervalMs: 60_000,
+// Security-only health component exposed from forge/security.
+const healthComp = securityHealthComponent(jwksKeys, { degraded: true });
+
+// Full forge/lifecycle adapter exposed from forge/lifecycle.
+const lifecycleComp = securityComponent("security.jwks", jwksKeys, {
+  degraded: true,
 });
-// Mount in forge.boot({ components: [..., healthComp] })
+
+// Mount either one in forge.boot({ components: [..., lifecycleComp] }).
 ```
 
 ---

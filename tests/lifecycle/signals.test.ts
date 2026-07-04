@@ -96,6 +96,19 @@ describe("installSignalHandlers", () => {
     expect(source.count("SIGINT")).toBe(0);
   });
 
+  test("duplicate configured signals install only one listener", () => {
+    const source = fakeSource();
+    const dispose = installSignalHandlers({
+      signals: ["SIGTERM", "SIGTERM"],
+      onSignal: () => {},
+      source,
+      exit: () => {},
+    });
+    expect(source.count("SIGTERM")).toBe(1);
+    dispose();
+    expect(source.count("SIGTERM")).toBe(0);
+  });
+
   test("defaults to SIGTERM and SIGINT", () => {
     const source = fakeSource();
     const dispose = installSignalHandlers({

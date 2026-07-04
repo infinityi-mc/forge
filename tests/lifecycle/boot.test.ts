@@ -119,6 +119,65 @@ describe("forge.boot — rollback on start failure", () => {
     expect((error as StartupError).component).toBe("slow");
     expect(events).toContain("a:stop");
   });
+
+  test("startup rollback drains started components before a pending shutdown resumes", async () => {
+    const events: string[] = [];
+    const signal = "SIGUSR1" as NodeJS.Signals;
+
+    await expect(
+      forge.boot({
+        components: [
+          fakeComponent("a", { events }),
+          {
+            name: "b",
+            start() {
+              events.push("b:start");
+              process.emit(signal);
+              throw new Error("b failed");
+            },
+          },
+        ],
+        installSignals: true,
+        signals: [signal],
+        exit: () => {},
+      }),
+    ).rejects.toThrow(StartupError);
+
+    await Promise.resolve();
+
+    expect(events).toEqual(["a:start", "b:start", "a:stop"]);
+  });
+});
+
+describe("forge.boot — shutdown during startup", () => {
+  test("stops a component whose start finishes after shutdown begins", async () => {
+    const events: string[] = [];
+    const signal = "SIGUSR1" as NodeJS.Signals;
+    const app = await forge.boot({
+      components: [
+        {
+          name: "slow",
+          async start() {
+            events.push("slow:start");
+            process.emit(signal);
+            await Promise.resolve();
+          },
+          stop() {
+            events.push("slow:stop");
+          },
+        },
+        fakeComponent("never", { events }),
+      ],
+      signals: [signal],
+      installSignals: true,
+      exit: () => {},
+    });
+
+    await app.done;
+
+    expect(app.ready).toBe(false);
+    expect(events).toEqual(["slow:start", "slow:stop"]);
+  });
 });
 
 describe("forge.boot — façade", () => {
