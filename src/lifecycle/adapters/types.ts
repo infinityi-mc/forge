@@ -1,13 +1,14 @@
 /**
  * Structural seams for the official `forge/lifecycle/adapters`.
  *
- * The adapters wrap `forge/telemetry`, `forge/config`, `forge/data`,
- * `forge/http`, `forge/messaging`, and `forge/resilience` objects into
- * {@link Component}s, but they do so **without** hard-importing those modules.
- * Each adapter is typed against the minimal `*Like` interface describing only
- * the methods it touches; the real `Telemetry`, `DynamicConfigHandle`, `Db`,
- * `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`,
- * `MessageBus`, `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
+ * The adapters wrap `forge/telemetry`, `forge/config`, `forge/preference`,
+ * `forge/data`, `forge/http`, `forge/messaging`, and `forge/resilience` objects
+ * into {@link Component}s, but they do so **without** hard-importing those
+ * modules. Each adapter is typed against the minimal `*Like` interface
+ * describing only the methods it touches; the real `Telemetry`,
+ * `DynamicConfigHandle`, `PreferencesHandle`, `Db`, `Pool`, `HttpServer`,
+ * `MessageConsumer`, `OutboxRelay`, `Worker`, `MessageBus`,
+ * `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
  * these structurally, so the adapters are drop-in with zero changes to the other
  * modules.
  *
@@ -37,6 +38,12 @@ export interface TelemetryLike {
 /** The slice of `forge/config`'s dynamic config handle the {@link configComponent} uses. */
 export interface DynamicConfigLike {
   /** Stop provider subscriptions and release dynamic config resources. */
+  shutdown(): Promise<void> | void;
+}
+
+/** The slice of `forge/preference`'s preferences handle the {@link preferenceComponent} uses. */
+export interface PreferenceLike {
+  /** Flush pending writes, unsubscribe watchers, and release store resources. */
   shutdown(): Promise<void> | void;
 }
 
