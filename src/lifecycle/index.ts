@@ -11,7 +11,8 @@
  * This entry-point exposes the {@link forge} façade, {@link boot},
  * {@link asComponent}, the error taxonomy, the core contracts, the health-probe
  * surface, and the official module adapters (`telemetryComponent`,
- * `databaseComponent`, `httpServerComponent`, the messaging adapters).
+ * `configComponent`, `databaseComponent`, `httpServerComponent`, the messaging
+ * adapters).
  *
  * @example Minimal usage
  * ```ts
@@ -48,6 +49,7 @@ export {
 } from "./errors";
 
 export {
+  configComponent,
   consumerComponent,
   databaseComponent,
   httpServerComponent,
@@ -61,6 +63,7 @@ export type {
   AdapterOptions,
   DatabaseComponentOptions,
   DatabaseLike,
+  DynamicConfigLike,
   HttpServerComponentOptions,
   HttpServerLike,
   MessageBusLike,
