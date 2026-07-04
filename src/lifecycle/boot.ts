@@ -221,8 +221,9 @@ export async function boot(options: BootOptions): Promise<Application> {
               metrics,
               ...(tracer !== undefined ? { tracer } : {}),
             });
-            disposeHealth();
-            disposeSignals();
+            started.length = 0;
+            tryCleanup("disposeHealth", disposeHealth);
+            tryCleanup("disposeSignals", disposeSignals);
             throw new StartupError(
               `component "${component.name}" failed to start; boot aborted and rolled back`,
               { component: component.name, cause },
