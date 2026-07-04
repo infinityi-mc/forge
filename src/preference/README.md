@@ -1,25 +1,29 @@
-# `forge/preference`
+# forge/preference
 
 User-owned, runtime-mutable, fail-safe settings. `forge/preference` is the product-layer sibling of `forge/config`: it reuses the same schema builder, but bad user data never crashes the app. Invalid leaves fall back independently to defaults or `undefined`, writes are validated before persistence, and durable stores keep explicit values only.
 
 ---
 
-## Shipped Today
+## Features
 
-1. `definePreferences(schema, options)` - async load, fail-safe validate, freeze, and return a live values handle.
-2. `set`, `update`, `reset`, `resetAll`, and `isSet` - validated write APIs over the explicit-values model.
-3. Stores - `memoryStore`, `jsonFileStore`, `sqliteStore`, plus the `PreferenceStore` interface for custom stores.
-4. Scopes - ordered user/workspace/device layers where later scopes win.
-5. Versioning - persisted `$version`, ordered migrations, unknown-key preservation, and migration diagnostics.
-6. Observability - optional structural logger lines for load, save, external reload, and migration events.
-7. Testing - `mockPreferences`, `memoryStore`, and store conformance helpers from `forge/preference/testing`.
+- **`definePreferences(schema, options)`** - async load, fail-safe validate, freeze, and return a live values handle.
+- **`set`, `update`, `reset`, `resetAll`, and `isSet`** - validated write APIs over the explicit-values model.
+- **Stores** - `memoryStore`, `jsonFileStore`, `sqliteStore`, plus the `PreferenceStore` interface for custom stores.
+- **Scopes** - ordered user/workspace/device layers where later scopes win.
+- **Versioning** - persisted `$version`, ordered migrations, unknown-key preservation, and migration diagnostics.
+- **Observability** - optional structural logger lines for load, save, external reload, and migration events.
+- **Testing** - `mockPreferences`, `memoryStore`, and store conformance helpers from `forge/preference/testing`.
 
 ---
 
 ## Quick Start
 
 ```ts
-import { definePreferences, jsonFileStore, t } from "@infinityi/forge/preference";
+import {
+  definePreferences,
+  jsonFileStore,
+  t,
+} from "@infinityi/forge/preference";
 
 export const prefs = await definePreferences(
   {

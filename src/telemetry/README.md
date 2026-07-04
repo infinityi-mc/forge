@@ -1,4 +1,4 @@
-# `forge/telemetry`
+# forge/telemetry
 
 The nervous system of a Forge application. Unifies the three pillars of observability — **logs**, **metrics**, and **traces** — under a single `TelemetryContext` propagated through `AsyncLocalStorage`.
 
@@ -11,23 +11,21 @@ Most observability libraries (including the official `@opentelemetry/*` JS SDK) 
 
 ---
 
-## Shipped today
+## Features
 
-1. `forge/telemetry/context` — trace ids, span ids, baggage, and W3C `traceparent` / `tracestate` / `baggage` propagation.
-2. `forge/telemetry/log` — structured, contextual JSON logging with built-in middleware (`redact`, `sample`, `rateLimit`, `correlation`, `serialize`, `telemetry`) and a stdout exporter that auto-detects JSON vs. pretty output.
-3. `forge/telemetry/meter` — counter, up-down counter, gauge, histogram with automatic in-memory aggregation, periodic + on-demand collection, recording / null / stdout exporters.
-4. `forge/telemetry/trace` — `Tracer` + `Span` with W3C context bridge, samplers (`alwaysOn`, `alwaysOff`, `parentBased`, `ratio`), `simpleSpanProcessor` + `batchSpanProcessor`, recording / null / stdout exporters.
-5. `forge/telemetry/exporters/otlp-http` — zero-dependency OTLP/HTTP **JSON** exporters for logs, metrics, traces, sharing a retry-aware transport.
-6. `forge/telemetry/exporters/prometheus` — pull-based text-exposition exporter for the meter (`/metrics` endpoint).
-7. `forge/telemetry/instrumentation/fetch` — opt-in `tracedFetch` wrapper that creates a client span per request and injects W3C headers.
-8. `forge/telemetry/initTelemetry` — top-level factory that wires log + meter + trace around a single `Resource` with a unified `flush()` / `shutdown()`.
-9. `forge/telemetry/testing` + `forge/telemetry/*/testing` — `createTestTelemetry()` aggregate plus recording exporters and conformance scenarios for verifying BYO exporters.
-
-Upcoming: more instrumentation wrappers (`tracedSqlite`, `tracedPg`), OTLP/HTTP **protobuf** body encoder, OTLP/gRPC.
+- `forge/telemetry/context` — trace ids, span ids, baggage, and W3C `traceparent` / `tracestate` / `baggage` propagation.
+- `forge/telemetry/log` — structured, contextual JSON logging with built-in middleware (`redact`, `sample`, `rateLimit`, `correlation`, `serialize`, `telemetry`) and a stdout exporter that auto-detects JSON vs. pretty output.
+- `forge/telemetry/meter` — counter, up-down counter, gauge, histogram with automatic in-memory aggregation, periodic + on-demand collection, recording / null / stdout exporters.
+- `forge/telemetry/trace` — `Tracer` + `Span` with W3C context bridge, samplers (`alwaysOn`, `alwaysOff`, `parentBased`, `ratio`), `simpleSpanProcessor` + `batchSpanProcessor`, recording / null / stdout exporters.
+- `forge/telemetry/exporters/otlp-http` — zero-dependency OTLP/HTTP **JSON** exporters for logs, metrics, traces, sharing a retry-aware transport.
+- `forge/telemetry/exporters/prometheus` — pull-based text-exposition exporter for the meter (`/metrics` endpoint).
+- `forge/telemetry/instrumentation/fetch` — opt-in `tracedFetch` wrapper that creates a client span per request and injects W3C headers.
+- `forge/telemetry/initTelemetry` — top-level factory that wires log + meter + trace around a single `Resource` with a unified `flush()` / `shutdown()`.
+- `forge/telemetry/testing` + `forge/telemetry/*/testing` — `createTestTelemetry()` aggregate plus recording exporters and conformance scenarios for verifying BYO exporters.
 
 ---
 
-## Module layout
+## Module Layout
 
 ```
 src/telemetry/
@@ -77,7 +75,7 @@ src/telemetry/
 
 ---
 
-## Quick start
+## Quick Start
 
 ```ts
 import { createLog } from "forge/telemetry/log";
@@ -95,7 +93,7 @@ try {
 }
 ```
 
-### Child loggers
+### Child Loggers
 
 Sub-systems get their own context via `child()`. Children inherit the parent's level, exporter, and middleware stack — middleware is **not** re-stacked per `child()` call.
 
@@ -104,7 +102,7 @@ const dbLog = log.child({ subsystem: "postgres" });
 dbLog.debug("query executed", { durationMs: 14, rows: 5 });
 ```
 
-### Auto-context
+### Auto-Context
 
 If a `TelemetryContext` is active when a log call happens, the logger attaches it to the record automatically — no parameter threading required.
 
@@ -153,16 +151,16 @@ Place `telemetry()` after `sample()` and `rateLimit()` if you want `onDrop` even
 
 ---
 
-## Built-in middleware
+## Built-In Middleware
 
-| Middleware | Purpose |
-| :--- | :--- |
-| `redact({ paths, patterns, replacement })` | Replace sensitive values in attributes and messages before they leave the process. |
-| `sample({ rate, perSeverity, bucketMs, random })` | Drop records by a keep rate. Defaults to deterministic hashing so the same record makes the same decision inside a bucket. |
-| `rateLimit({ recordsPerInterval, intervalMs, burst, whenExceeded })` | Local token-bucket rate limit. Drops or throws when the bucket is empty. |
-| `correlation({ keys, includeTraceIds, source })` | Promotes baggage + trace ids from the active `TelemetryContext` onto the record's `attributes` (where exporters serialize them). |
-| `serialize({ errorKeys })` | Converts `Error` instances into plain objects so `JSON.stringify` works. Without this, `JSON.stringify(err)` returns `"{}"` because `Error`'s `name`/`message`/`stack` are non-enumerable. |
-| `telemetry({ onWrite, onDrop, onError })` | Observes writes, drops, and exporter failures. Hook failures are swallowed so they cannot alter logger control flow. |
+| Middleware                                                           | Purpose                                                                                                                                                                                    |
+| :------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `redact({ paths, patterns, replacement })`                           | Replace sensitive values in attributes and messages before they leave the process.                                                                                                         |
+| `sample({ rate, perSeverity, bucketMs, random })`                    | Drop records by a keep rate. Defaults to deterministic hashing so the same record makes the same decision inside a bucket.                                                                 |
+| `rateLimit({ recordsPerInterval, intervalMs, burst, whenExceeded })` | Local token-bucket rate limit. Drops or throws when the bucket is empty.                                                                                                                   |
+| `correlation({ keys, includeTraceIds, source })`                     | Promotes baggage + trace ids from the active `TelemetryContext` onto the record's `attributes` (where exporters serialize them).                                                           |
+| `serialize({ errorKeys })`                                           | Converts `Error` instances into plain objects so `JSON.stringify` works. Without this, `JSON.stringify(err)` returns `"{}"` because `Error`'s `name`/`message`/`stack` are non-enumerable. |
+| `telemetry({ onWrite, onDrop, onError })`                            | Observes writes, drops, and exporter failures. Hook failures are swallowed so they cannot alter logger control flow.                                                                       |
 
 ---
 
@@ -196,7 +194,7 @@ Keeps every record in memory and exposes `records` + `reset()`. Test-only.
 
 ---
 
-## Context (`forge/telemetry/context`)
+## Context
 
 ```ts
 import {
@@ -209,7 +207,9 @@ import {
 } from "forge/telemetry/context";
 
 // At request entry — start a brand-new trace.
-await withRootContext({ baggage: { tenantId: req.tenantId } }, () => handler(req));
+await withRootContext({ baggage: { tenantId: req.tenantId } }, () =>
+  handler(req),
+);
 
 // Or adopt an extracted context from incoming headers.
 const ctx = extract(objectCarrier(req.headers));
@@ -229,7 +229,7 @@ await fetch(url, { headers });
 
 ---
 
-## Error isolation
+## Error Isolation
 
 Exporter throws are isolated by default — a broken exporter cannot crash the host application. A single JSON fallback line is written to `process.stderr` when no `telemetry()` middleware is installed to observe the failure.
 
@@ -269,7 +269,7 @@ for (const scenario of STANDARD_LOG_SCENARIOS) {
 
 ---
 
-## Meter (`forge/telemetry/meter`)
+## Meter
 
 ```ts
 import { createMeter } from "forge/telemetry/meter";
@@ -299,18 +299,18 @@ latency.record(42, { method: "POST", path: "/orders" });
 await meter.shutdown();
 ```
 
-| Instrument | Method | When to use |
-| :--- | :--- | :--- |
-| `Counter` | `.add(delta, attrs?)` (monotonic; negatives rejected) | request counts, bytes written, errors. |
-| `UpDownCounter` | `.add(delta, attrs?)` (bi-directional) | queue depth, connection count, in-flight requests. |
-| `Gauge` | `.record(value, attrs?)` (last value wins) | memory usage, temperature, current rate. |
-| `Histogram` | `.record(value, attrs?)` | latencies, payload sizes. Default boundaries are latency-shaped (ms): `[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`. |
+| Instrument      | Method                                                | When to use                                                                                                                                        |
+| :-------------- | :---------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Counter`       | `.add(delta, attrs?)` (monotonic; negatives rejected) | request counts, bytes written, errors.                                                                                                             |
+| `UpDownCounter` | `.add(delta, attrs?)` (bi-directional)                | queue depth, connection count, in-flight requests.                                                                                                 |
+| `Gauge`         | `.record(value, attrs?)` (last value wins)            | memory usage, temperature, current rate.                                                                                                           |
+| `Histogram`     | `.record(value, attrs?)`                              | latencies, payload sizes. Default boundaries are latency-shaped (ms): `[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`. |
 
 Non-finite values (`NaN`, `Infinity`) are dropped silently. Negative deltas on a monotonic counter are dropped silently — use an up-down counter when both directions matter.
 
 ---
 
-## Trace (`forge/telemetry/trace`)
+## Trace
 
 ```ts
 import {
@@ -342,25 +342,25 @@ await tracer.withSpan("checkout", async (span) => {
 
 ### Samplers
 
-| Sampler | Behavior |
-| :--- | :--- |
-| `alwaysOnSampler()` | Record every span. |
-| `alwaysOffSampler()` | Drop every span. |
-| `ratioSampler({ rate })` | Deterministic per-trace keep rate (`0..1`). |
+| Sampler                                                           | Behavior                                                                                   |
+| :---------------------------------------------------------------- | :----------------------------------------------------------------------------------------- |
+| `alwaysOnSampler()`                                               | Record every span.                                                                         |
+| `alwaysOffSampler()`                                              | Drop every span.                                                                           |
+| `ratioSampler({ rate })`                                          | Deterministic per-trace keep rate (`0..1`).                                                |
 | `parentBasedSampler({ root, parentSampled?, parentNotSampled? })` | Delegates based on the parent span's SAMPLED flag. Defaults inherit the parent's decision. |
 
 ### Processors
 
-| Processor | Behavior |
-| :--- | :--- |
-| `simpleSpanProcessor({ exporter })` | Exports every span on `onEnd`. Good for tests + low-volume traces. |
+| Processor                                                                                                   | Behavior                                                                                                         |
+| :---------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------- |
+| `simpleSpanProcessor({ exporter })`                                                                         | Exports every span on `onEnd`. Good for tests + low-volume traces.                                               |
 | `batchSpanProcessor({ exporter, maxQueueSize?, maxExportBatchSize?, scheduledDelayMs?, exportTimeoutMs? })` | Bounded queue + timer-based batching. Recommended for production. Drops the oldest spans when the queue is full. |
 
 ---
 
-## Wire exporters
+## Wire Exporters
 
-### `forge/telemetry/exporters/otlp-http`
+### OTLP/HTTP
 
 Zero-dependency OTLP/HTTP **JSON** exporters — one factory per signal, all sharing a retry-aware transport (exponential backoff with jitter; retries on 408/429/5xx; bails on other 4xx).
 
@@ -406,7 +406,7 @@ const tracer = createTracer({
 
 Default endpoints follow the OTLP spec (`http://localhost:4318/v1/{logs,metrics,traces}`) so a local collector needs no config.
 
-### `forge/telemetry/exporters/prometheus`
+### Prometheus
 
 The Prometheus exposition format is pull-based; the exporter keeps the latest batch in memory and exposes a `render()` method.
 
@@ -438,7 +438,7 @@ Up-down counters are emitted as Prometheus `gauge` (no monotonic constraint). Hi
 
 ---
 
-## Top-level factory — `initTelemetry`
+## Top-Level Factory
 
 `initTelemetry()` wires every signal around a single `Resource` and exposes a unified `flush()` / `shutdown()` that fan out across log + meter + trace without throwing — errors are returned per signal so the host process can decide how to recover.
 
@@ -457,7 +457,9 @@ const t = initTelemetry({
 
 t.log!.info("ready");
 t.meter!.createCounter("http.requests").add(1);
-await t.tracer!.withSpan("checkout", async () => { /* … */ });
+await t.tracer!.withSpan("checkout", async () => {
+  /* … */
+});
 
 process.on("SIGTERM", async () => {
   const result = await t.shutdown();
@@ -470,7 +472,7 @@ Every section is independently optional — omit `log` / `meter` / `trace` and t
 
 ---
 
-## Instrumentation — `tracedFetch`
+## Instrumentation
 
 Opt-in wrapper around `fetch` that creates a client span per request and injects W3C `traceparent` / `tracestate` / `baggage` headers from the active context. No monkey-patching — consumers replace their `fetch` reference explicitly.
 
@@ -488,7 +490,7 @@ Disable header injection per call site with `disablePropagation: true` (useful f
 
 ---
 
-## End-to-end testing — `createTestTelemetry`
+## End-To-End Testing
 
 For consumers who want to assert across log + meter + trace at once, `createTestTelemetry()` wires `initTelemetry` with recording exporters for all three signals and exposes convenience getters.
 
@@ -507,10 +509,3 @@ expect(t.spans.map((s) => s.name)).toEqual(["checkout", "charge"]);
 ```
 
 The trace processor defaults to `"simple"` so spans appear in `t.spans` synchronously on `span.end()`. The meter's background timer is disabled (`intervalMs: 0`) so collection is deterministic via `t.flushAll()`.
-
----
-
-## Roadmap
-
-- **Next:** more instrumentation wrappers (`tracedSqlite`, `tracedPg`), middleware-shaped HTTP server wiring.
-- **Later:** OTLP/HTTP protobuf body encoder, OTLP/gRPC transport, Datadog-shaped JSON exporter.

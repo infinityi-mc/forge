@@ -1,31 +1,31 @@
-# `forge/resilience`
+# forge/resilience
 
 Composable fault tolerance for distributed systems. Wraps your business logic in **Policies** — retry, timeout, circuit-breaker, rate-limit, bulkhead, fallback, hedge — composed into **Pipelines** that share a single `AbortSignal` and integrate natively with `forge/telemetry`.
 
 Most resilience libraries in the JS/TS ecosystem suffer from three problems: timeouts leak in-flight I/O, breakers are hidden globals, and composition kills type inference. `forge/resilience` solves all three:
 
 - **Native `AbortSignal` propagation.** Pass `ctx.signal` to `fetch`, `bun:sqlite`, or any cooperating I/O. When a timeout fires, the socket actually closes — no orphaned promises consuming connections.
-- **Explicit state.** Every circuit breaker / rate limiter / bulkhead is an object *you* construct and hold. Want one per tenant? Build a `Map<string, CircuitBreaker>`. No hidden singletons, no global registry.
+- **Explicit state.** Every circuit breaker / rate limiter / bulkhead is an object _you_ construct and hold. Want one per tenant? Build a `Map<string, CircuitBreaker>`. No hidden singletons, no global registry.
 - **Pipeline composition.** `combine(retry, timeout, breaker)` returns a typed `Pipeline` with generic-preserving `execute<T>`. No nested wrappers, no inference loss.
 - **Telemetry by injection, not magic.** Every observable policy accepts an optional `telemetry: { meter, tracer }`. Standalone policies emit nothing. No globals.
 
 ---
 
-## Shipped today (PR A + PR B + PR C)
+## Features
 
-1. **Core contract** (`forge/resilience`) — `Policy`, `Pipeline`, `ExecutionContext`, `Operation`, `combine(...)`, no-throw `executeResult` + `Result<T, E>`, base errors `ResilienceError` / `TransientError` / `RateLimitError`.
-2. **`retry`** — `maxAttempts`, predicate-based `shouldRetry`, value-level `retryOn`, backoff strategies (`constantBackoff`, `linearBackoff`, `exponentialBackoff` with mandatory-by-default full jitter), injectable `clock`.
-3. **`timeout`** — `optimistic` (default) and `pessimistic` strategies. Aborts a child `AbortController` linked to the operation so cooperating I/O actually cancels.
-4. **`circuitBreaker`** — three-state breaker (closed / open / half-open), count- or time-based sliding window, ratio or absolute thresholds, `forceOpen()` / `forceClosed()` / `reset()` inspectors. Explicit instantiation: hold one per dependency or build a `Map` for per-tenant breakers.
-5. **`rateLimit`** — token-bucket (burst-friendly) and sliding-window (strict) algorithms, `throw` and `wait` modes, bounded waiter queue, abort-aware waits.
-6. **`bulkhead`** — concurrency-limiting semaphore with a bounded wait queue; `BulkheadFullError` when both slots and queue are saturated.
-7. **`fallback`** — substitute a secondary result when the primary fails; predicate-gated; preserves the original error on `cause`.
-8. **`hedge`** — fire speculative parallel attempts on a delay schedule. First to succeed wins; losers are aborted via their own `AbortSignal` so cooperating I/O actually cancels.
-9. **`forge/resilience/testing`** — deterministic `TestClock`, `executionContext()` / `createTestResilience()` factories, a standalone `createTestResilienceTelemetry()` double, and standard plus policy-specific conformance suites so wrappers around the canonical policies stay drop-in compatible.
+- **Core contract** (`forge/resilience`) — `Policy`, `Pipeline`, `ExecutionContext`, `Operation`, `combine(...)`, no-throw `executeResult` + `Result<T, E>`, base errors `ResilienceError` / `TransientError` / `RateLimitError`.
+- **retry** — `maxAttempts`, predicate-based `shouldRetry`, value-level `retryOn`, backoff strategies (`constantBackoff`, `linearBackoff`, `exponentialBackoff` with mandatory-by-default full jitter), injectable `clock`.
+- **timeout** — `optimistic` (default) and `pessimistic` strategies. Aborts a child `AbortController` linked to the operation so cooperating I/O actually cancels.
+- **circuitBreaker** — three-state breaker (closed / open / half-open), count- or time-based sliding window, ratio or absolute thresholds, `forceOpen()` / `forceClosed()` / `reset()` inspectors. Explicit instantiation: hold one per dependency or build a `Map` for per-tenant breakers.
+- **rateLimit** — token-bucket (burst-friendly) and sliding-window (strict) algorithms, `throw` and `wait` modes, bounded waiter queue, abort-aware waits.
+- **bulkhead** — concurrency-limiting semaphore with a bounded wait queue; `BulkheadFullError` when both slots and queue are saturated.
+- **fallback** — substitute a secondary result when the primary fails; predicate-gated; preserves the original error on `cause`.
+- **hedge** — fire speculative parallel attempts on a delay schedule. First to succeed wins; losers are aborted via their own `AbortSignal` so cooperating I/O actually cancels.
+- **Testing** (`forge/resilience/testing`) — deterministic `TestClock`, `executionContext()` / `createTestResilience()` factories, a standalone `createTestResilienceTelemetry()` double, and standard plus policy-specific conformance suites so wrappers around the canonical policies stay drop-in compatible.
 
 ---
 
-## Module layout
+## Module Layout
 
 ```
 src/resilience/
@@ -95,7 +95,7 @@ src/resilience/
 
 ---
 
-## Quick start
+## Quick Start
 
 ```ts
 import {
@@ -124,7 +124,7 @@ const data = await pipeline.execute(async (ctx) => {
 });
 ```
 
-### No-throw with `executeResult`
+### No-Throw With executeResult
 
 ```ts
 const outcome = await pipeline.executeResult(async (ctx) => {
@@ -139,12 +139,12 @@ if (outcome.isOk()) {
 }
 ```
 
-### With telemetry
+### With Telemetry
 
 ```ts
 import { initTelemetry } from "forge/telemetry";
 // …configure exporters…
-const t = initTelemetry({ /* … */ });
+const t = initTelemetry({/* … */});
 
 const pipeline = combine(
   retry({
@@ -160,17 +160,17 @@ const pipeline = combine(
 
 Emits:
 
-| Metric                                | Type    |
-| :------------------------------------ | :------ |
-| `forge_resilience_attempts_total`     | counter |
-| `forge_resilience_retries_total`      | counter |
-| `forge_resilience_timeout_total`      | counter |
-| `forge_resilience_circuit_state`      | gauge   |
-| `forge_resilience_bulkhead_queue_size`| gauge   |
+| Metric                                 | Type    |
+| :------------------------------------- | :------ |
+| `forge_resilience_attempts_total`      | counter |
+| `forge_resilience_retries_total`       | counter |
+| `forge_resilience_timeout_total`       | counter |
+| `forge_resilience_circuit_state`       | gauge   |
+| `forge_resilience_bulkhead_queue_size` | gauge   |
 
 Plus span events `resilience.retry.attempt`, `resilience.timeout.triggered`, `resilience.circuit.state_change`, `resilience.fallback.triggered`, and `resilience.hedge.attempt`.
 
-### Degrading gracefully with `fallback`
+### Degrading Gracefully With fallback
 
 ```ts
 import { combine, fallback, retry, timeout } from "forge/resilience";
@@ -193,7 +193,7 @@ const data = await pipeline.execute(async (ctx) => {
 });
 ```
 
-### Cutting tail latency with `hedge`
+### Cutting Tail Latency With hedge
 
 ```ts
 import { combine, hedge } from "forge/resilience";
@@ -210,7 +210,7 @@ await pipeline.execute(async (ctx) => {
 });
 ```
 
-### Testing deterministically
+### Testing Deterministically
 
 ```ts
 import { describe, expect, test } from "bun:test";
@@ -232,7 +232,8 @@ test("retries with exponential backoff", async () => {
     return "ok";
   }, executionContext());
 
-  await Promise.resolve(); await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
   await clock.tickAsync(100); // first backoff
   await clock.tickAsync(200); // second backoff
 
@@ -252,12 +253,16 @@ import {
 
 const t = createTestResilience();
 await assertConformance(
-  () => combine(retry({ maxAttempts: 1, clock: t.clock }), timeout({ ms: 100, clock: t.clock })),
+  () =>
+    combine(
+      retry({ maxAttempts: 1, clock: t.clock }),
+      timeout({ ms: 100, clock: t.clock }),
+    ),
   STANDARD_RESILIENCE_SCENARIOS,
 );
 ```
 
-### Standalone telemetry tests
+### Standalone Telemetry Tests
 
 ```ts
 import { retry } from "forge/resilience";
@@ -276,7 +281,7 @@ const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
 
 ---
 
-## Integration status
+## Integration
 
 - **HTTP client**: `forge/http/client` accepts a structural resilience pipeline through `createHttpClient({ resilience })`.
 - **HTTP middleware**: `forge/http/middleware` includes `rateLimit({ limiter })`, and `problemDetails()` maps structural rate-limit and circuit-open errors to RFC 7807 responses.
@@ -286,7 +291,7 @@ const policy = retry({ maxAttempts: 2, telemetry: telemetry.telemetry, clock });
 - **Messaging state events**: `forge/resilience/messaging` can publish circuit-breaker state changes through a structural message bus.
 - **Security**: JWKS key stores accept a structural pipeline for resilient cache fetches.
 
-### HTTP integration
+### HTTP Integration
 
 ```ts
 import { createHttpClient } from "forge/http/client";
@@ -307,18 +312,18 @@ import { problemDetails, rateLimit } from "forge/http/middleware";
 import { createRouter } from "forge/http/server";
 import { combine, rateLimit as resilienceRateLimit } from "forge/resilience";
 
-const limiter = combine(resilienceRateLimit({
-  algorithm: { kind: "sliding-window", limit: 100, windowMs: 60_000 },
-}));
+const limiter = combine(
+  resilienceRateLimit({
+    algorithm: { kind: "sliding-window", limit: 100, windowMs: 60_000 },
+  }),
+);
 
-const router = createRouter()
-  .use(problemDetails())
-  .use(rateLimit({ limiter }));
+const router = createRouter().use(problemDetails()).use(rateLimit({ limiter }));
 ```
 
 `problemDetails()` maps resilience rate-limit errors to `429` with `Retry-After`, and circuit-open errors to `503` with `Retry-After` when the error exposes a future `retryAt` timestamp.
 
-### Lifecycle readiness
+### Lifecycle Readiness
 
 ```ts
 import { circuitBreaker, bulkhead } from "forge/resilience";
@@ -327,7 +332,10 @@ import {
   bulkheadComponent,
 } from "forge/lifecycle/adapters";
 
-const breaker = circuitBreaker({ failureThreshold: 0.5, resetTimeoutMs: 30_000 });
+const breaker = circuitBreaker({
+  failureThreshold: 0.5,
+  resetTimeoutMs: 30_000,
+});
 const limiter = bulkhead({ maxConcurrent: 20, maxQueue: 50 });
 
 const components = [
@@ -338,7 +346,7 @@ const components = [
 
 These adapters are readiness checks, not liveness kill switches: an open breaker is `unhealthy` by default, a half-open breaker is `degraded`, and a bulkhead with queued callers is `degraded` unless `unhealthyAtSaturation` is enabled.
 
-### Config helpers
+### Config Helpers
 
 ```ts
 import { defineConfig } from "forge/config";
@@ -359,7 +367,7 @@ const pipeline = combine(
 
 The helpers are schema fragments and mappers only. They do not load config globally, and policy constructors still enforce numeric range validation.
 
-### Circuit state messages
+### Circuit State Messages
 
 ```ts
 import { circuitBreaker } from "forge/resilience";
@@ -372,21 +380,26 @@ const breaker = circuitBreaker({
     bus,
     source: "payments",
     headers: { service: "checkout" },
-    onError: (error) => logger.warn("failed to publish breaker state", { error }),
+    onError: (error) =>
+      logger.warn("failed to publish breaker state", { error }),
   }),
 });
 ```
 
 Publishing is best-effort and observational. A publish failure is sent to `onError` when provided and never changes breaker admission behavior.
 
-## Best practices
+---
+
+## Best Practices
 
 - Build one breaker, limiter, or bulkhead per isolated dependency or tenant; sharing one instance across unrelated dependencies couples their failure modes.
 - Put `retry` outside `timeout` when each attempt needs its own deadline, and pass `ctx.signal` to the underlying I/O.
 - Use `TestClock` for policy tests that involve sleeps, backoff, timeout, rate-limit wait mode, or hedge delay.
 - Run `STANDARD_RESILIENCE_SCENARIOS` against wrapper pipelines and the focused policy-specific suites when adapting policy-like implementations.
 
-## Common pitfalls
+---
+
+## Common Pitfalls
 
 - A timeout only cancels work that observes `ctx.signal`; ignoring the signal leaves background I/O running.
 - In-memory breaker, limiter, bulkhead, and wait-queue state is per process, not distributed across replicas.
@@ -395,7 +408,7 @@ Publishing is best-effort and observational. A publish failure is sent to `onErr
 
 ---
 
-## Constraints (out of scope by design)
+## Constraints
 
 - **No distributed state.** Rate limiters and breakers are in-memory, per-instance. 10 pods = 10 independent breakers. Distributed limits belong in your API gateway or a future `forge/distributed` module.
 - **No auto-magic wrapping.** We do not monkey-patch `globalThis.fetch` or `http.request`. Wrap explicitly or pass a resilience pipeline to `forge/http/client`.
