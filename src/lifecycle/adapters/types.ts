@@ -2,13 +2,13 @@
  * Structural seams for the official `forge/lifecycle/adapters`.
  *
  * The adapters wrap `forge/telemetry`, `forge/config`, `forge/preference`,
- * `forge/data`, `forge/http`, `forge/messaging`, and `forge/resilience` objects
- * into {@link Component}s, but they do so **without** hard-importing those
- * modules. Each adapter is typed against the minimal `*Like` interface
- * describing only the methods it touches; the real `Telemetry`,
- * `DynamicConfigHandle`, `PreferencesHandle`, `Db`, `Pool`, `HttpServer`,
- * `MessageConsumer`, `OutboxRelay`, `Worker`, `MessageBus`,
- * `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
+ * `forge/security`, `forge/data`, `forge/http`, `forge/messaging`, and
+ * `forge/resilience` objects into {@link Component}s, but they do so
+ * **without** hard-importing those modules. Each adapter is typed against the
+ * minimal `*Like` interface describing only the methods it touches; the real
+ * `Telemetry`, `DynamicConfigHandle`, `PreferencesHandle`, `KeyStore`, `Db`,
+ * `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`,
+ * `MessageBus`, `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
  * these structurally, so the adapters are drop-in with zero changes to the other
  * modules.
  *
@@ -45,6 +45,27 @@ export interface DynamicConfigLike {
 export interface PreferenceLike {
   /** Flush pending writes, unsubscribe watchers, and release store resources. */
   shutdown(): Promise<void> | void;
+}
+
+/** Health shape exposed by `forge/security` JWKS key stores. */
+export interface SecurityHealthLike {
+  readonly status: "healthy" | "degraded" | "unhealthy";
+  readonly message?: string;
+  readonly checkedAt?: Date;
+}
+
+/** The slice of `forge/security`'s JWKS key store the {@link securityComponent} uses. */
+export interface SecurityLike {
+  /** Report IdP/JWKS reachability. */
+  health(): Promise<SecurityHealthLike> | SecurityHealthLike;
+  /** Release security resource state when exposed by the concrete resource. */
+  shutdown?(): Promise<void> | void;
+}
+
+/** Options for {@link securityComponent}. */
+export interface SecurityComponentOptions extends AdapterOptions {
+  /** Report an unhealthy security health result as `degraded`. Default `false`. */
+  readonly degraded?: boolean;
 }
 
 /** The slice of `forge/data`'s `Db` the {@link databaseComponent} uses. */

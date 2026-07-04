@@ -36,11 +36,12 @@ It is **not** a process supervisor, a clustering manager, a service mesh, or a D
 
 ### Module Adapters
 
-First-class module adapters (`forge/lifecycle/adapters`) so the Quick Start `components: [telemetry, config, preferences, db, http, …]` "just works". Each wraps a Forge object into a `Component` with a sensible `healthcheck` when one can be derived, typed against a minimal structural `*Like` interface — **no hard dependency** on the other modules (the real objects already conform). Every adapter accepts an optional `healthcheck` override.
+First-class module adapters (`forge/lifecycle/adapters`) so the Quick Start `components: [telemetry, config, preferences, security, db, http, …]` "just works". Each wraps a Forge object into a `Component` with a sensible `healthcheck` when one can be derived, typed against a minimal structural `*Like` interface — **no hard dependency** on the other modules (the real objects already conform). Every adapter accepts an optional `healthcheck` override.
 
 - **`telemetryComponent(name, telemetry, opts?)`** — `stop` → `telemetry.shutdown()` to flush pending telemetry and release exporter resources. Place it early in `components` so it stops last and can observe shutdown.
 - **`configComponent(name, dynamicConfig, opts?)`** — `stop` → `dynamicConfig.shutdown()` to unsubscribe provider updates and release polling/network resources. No default healthcheck is derived because dynamic config handles expose no public status seam; pass `opts.healthcheck` when the application has provider-specific health.
 - **`preferenceComponent(name, prefs, opts?)`** — `stop` → `prefs.shutdown()` to flush pending writes, unsubscribe watchers, and release store resources. No default healthcheck is derived because preference handles expose no public store-health seam; pass `opts.healthcheck` when the application has store-specific health.
+- **`securityComponent(name, security, opts?)`** — derived `healthcheck` mirrors `security.health()` for JWKS/IdP reachability and `stop` → `security.shutdown()` when exposed by the resource. Use `degraded: true` when an unhealthy IdP should degrade readiness instead of failing it outright.
 - **`databaseComponent(name, db, opts?)`** — `start` → `db.ping()` (fail-fast; disable with `pingOnStart: false`), `stop` → `db.shutdown()`, derived `healthcheck` pings and maps to `healthy` / `unhealthy`.
 - **`poolComponent(name, pool, opts?)`** — `stop` → `pool.shutdown()` (falls back to `drain()`); `healthcheck` from `stats()` (`draining` ⇒ `unhealthy`, else `healthy` with `{ active, idle, waiting }`).
 - **`httpServerComponent(name, server, opts?)`** — `stop` → `server.stop(true)` to drain in-flight requests (`closeActiveConnections` configurable). Pair with `preStopDelayMs` so the LB sees `/readyz → 503` before the drain.
@@ -59,6 +60,7 @@ import {
   telemetryComponent,
   configComponent,
   preferenceComponent,
+  securityComponent,
   databaseComponent,
   httpServerComponent,
   consumerComponent,
@@ -72,6 +74,7 @@ const app = await forge.boot({
     telemetryComponent("telemetry", telemetry),
     configComponent("dynamic-config", flags),
     preferenceComponent("preferences", prefs),
+    securityComponent("security.jwks", keyStore, { degraded: true }),
     databaseComponent("db", db), // ping on start, shutdown on stop, healthcheck
     consumerComponent("consumer", consumer), // stops before the db (reverse order)
     httpServerComponent("http", server), // stop(true) drains in-flight requests
@@ -156,10 +159,11 @@ src/lifecycle/
 ├── phase.ts        # silent logger, per-component child logger, bounded runPhase()
 ├── observability.ts # lifecycle.* metric surface + withSpan (opt-in, guarded)
 ├── adapters/
-│   ├── index.ts    # telemetryComponent, configComponent, preferenceComponent, databaseComponent, httpServerComponent, messaging adapters
+│   ├── index.ts    # telemetryComponent, configComponent, preferenceComponent, securityComponent, databaseComponent, httpServerComponent, messaging adapters
 │   ├── telemetry.ts # telemetryComponent
 │   ├── config.ts   # configComponent
 │   ├── preference.ts # preferenceComponent
+│   ├── security.ts # securityComponent
 │   ├── data.ts     # databaseComponent, poolComponent
 │   ├── http.ts     # httpServerComponent
 │   ├── messaging.ts # messageBus/consumer/relay/workerComponent

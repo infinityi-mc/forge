@@ -11,7 +11,7 @@
  * This entry-point exposes the {@link forge} façade, {@link boot},
  * {@link asComponent}, the error taxonomy, the core contracts, the health-probe
  * surface, and the official module adapters (`telemetryComponent`,
- * `configComponent`, `preferenceComponent`, `databaseComponent`,
+ * `configComponent`, `preferenceComponent`, `securityComponent`, `databaseComponent`,
  * `httpServerComponent`, the messaging adapters).
  *
  * @example Minimal usage
@@ -57,6 +57,7 @@ export {
   preferenceComponent,
   poolComponent,
   relayComponent,
+  securityComponent,
   telemetryComponent,
   workerComponent,
 } from "./adapters";
@@ -70,6 +71,9 @@ export type {
   MessageBusLike,
   PreferenceLike,
   PoolLike,
+  SecurityComponentOptions,
+  SecurityHealthLike,
+  SecurityLike,
   StartStopLike,
   TelemetryLike,
 } from "./adapters";

@@ -1,8 +1,8 @@
 /**
  * `forge/lifecycle/adapters` — thin official adapters that wrap
- * `forge/telemetry`, `forge/config`, `forge/preference`, `forge/data`,
- * `forge/http`, `forge/messaging`, and `forge/resilience` objects into
- * {@link Component}s with sensible `healthcheck`s, so the Quick Start
+ * `forge/telemetry`, `forge/config`, `forge/preference`, `forge/security`,
+ * `forge/data`, `forge/http`, `forge/messaging`, and `forge/resilience` objects
+ * into {@link Component}s with sensible `healthcheck`s, so the Quick Start
  * `components: [db, http, ...]` "just works".
  *
  * The adapters are typed against minimal structural `*Like` interfaces, so they
@@ -23,6 +23,7 @@ export {
 } from "./messaging";
 export { preferenceComponent } from "./preference";
 export { bulkheadComponent, circuitBreakerComponent } from "./resilience";
+export { securityComponent } from "./security";
 export { telemetryComponent } from "./telemetry";
 
 export type {
@@ -40,6 +41,9 @@ export type {
   MessageBusLike,
   PreferenceLike,
   PoolLike,
+  SecurityComponentOptions,
+  SecurityHealthLike,
+  SecurityLike,
   StartStopLike,
   TelemetryLike,
 } from "./types";

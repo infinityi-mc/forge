@@ -10,6 +10,7 @@ import {
   preferenceComponent,
   poolComponent,
   relayComponent,
+  securityComponent,
   telemetryComponent,
   workerComponent,
 } from "../../src/lifecycle/adapters";
@@ -126,6 +127,64 @@ describe("preferenceComponent", () => {
     expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
       status: "degraded",
       detail: "store lag",
+    });
+  });
+});
+
+describe("securityComponent", () => {
+  test("derives healthcheck from security health", async () => {
+    const c = securityComponent("security", {
+      health: () => ({ status: "healthy", checkedAt: new Date(0) }),
+    });
+
+    expect(c.start).toBeUndefined();
+    expect(c.stop).toBeUndefined();
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "healthy",
+      data: { checkedAt: new Date(0).toISOString() },
+    });
+  });
+
+  test("maps unhealthy health results to detail and can downgrade to degraded", async () => {
+    const c = securityComponent("security", {
+      health: () => ({
+        status: "unhealthy",
+        message: "JWKS fetch failed",
+        checkedAt: new Date(0),
+      }),
+    }, { degraded: true });
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "JWKS fetch failed",
+      data: { checkedAt: new Date(0).toISOString() },
+    });
+  });
+
+  test("stops security resources when shutdown is available", async () => {
+    const calls: string[] = [];
+    const c = securityComponent("security", {
+      health: () => ({ status: "healthy" }),
+      shutdown: () => {
+        calls.push("shutdown");
+      },
+    });
+
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+
+    expect(calls).toEqual(["shutdown"]);
+  });
+
+  test("a custom healthcheck overrides derived security health", async () => {
+    const c = securityComponent("security", {
+      health: () => ({ status: "healthy" }),
+    }, {
+      healthcheck: () => ({ status: "degraded", detail: "idp lag" }),
+    });
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "idp lag",
     });
   });
 });
