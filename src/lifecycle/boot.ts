@@ -59,6 +59,11 @@ export async function boot(options: BootOptions): Promise<Application> {
   let ready = false;
   let readyEmitted = false;
   let shutdownPromise: Promise<void> | undefined;
+  let startupFinished = false;
+  let resolveStartupFinished!: () => void;
+  const startupFinishedPromise = new Promise<void>((resolve) => {
+    resolveStartupFinished = resolve;
+  });
 
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
@@ -126,85 +131,119 @@ export async function boot(options: BootOptions): Promise<Application> {
       "lifecycle.shutdown",
       { kind: "internal", ...(reason ? { attributes: { reason } } : {}) },
       async () => {
-        if (preStopDelayMs > 0) {
-          await clock.sleep(preStopDelayMs);
-        }
-        const result = await stopComponents(started, {
-          logger,
-          clock,
-          shutdownTimeout,
-          metrics,
-          ...(tracer !== undefined ? { tracer } : {}),
-        });
-        const failed = result.errors.length > 0 || result.timeouts.length > 0;
-        metrics.shutdownDuration.record(now() - perfStartedAt);
-        logger.info("lifecycle.shutdown.done", {
-          durationMs: clock.now() - startedAt,
-          errors: result.errors.length,
-          timeouts: result.timeouts.length,
-        });
-        resolveDone();
-        disposeHealth();
-        disposeSignals();
-        exit(failed ? 1 : 0);
-      },
-    );
-    return shutdownPromise;
-  }
-
-  // ---- Ordered start with rollback on failure ----------------------------
-  const bootStartedAt = clock.now();
-  const bootPerfStartedAt = now();
-  await withSpan(tracer, "lifecycle.boot", { kind: "internal" }, async () => {
-    for (const component of components) {
-      const log = componentLogger(logger, component.name);
-      if (typeof component.start === "function") {
-        log.debug("lifecycle.component.start.start", { component: component.name });
-        const startPerfAt = now();
-        const outcome = await withSpan(
-          tracer,
-          "lifecycle.component.start",
-          { kind: "internal", attributes: { component: component.name } },
-          () => runPhase((ctx) => component.start!(ctx), log, startTimeout, clock),
-        );
-        metrics.startDuration.record(now() - startPerfAt, {
-          component: component.name,
-          outcome:
-            outcome.kind === "ok"
-              ? "ok"
-              : outcome.kind === "timeout"
-                ? "timeout"
-                : "error",
-        });
-        if (outcome.kind !== "ok") {
-          const cause =
-            outcome.kind === "error"
-              ? outcome.error
-              : new Error(`start() exceeded its ${startTimeout}ms timeout`);
-          log.error("lifecycle.component.start.error", {
-            component: component.name,
-            error: String(cause),
-          });
-          // Roll back the components that did start, in reverse, then bail.
-          await stopComponents(started, {
+        let failed = false;
+        try {
+          if (!startupFinished) {
+            await startupFinishedPromise;
+          }
+          if (preStopDelayMs > 0) {
+            await clock.sleep(preStopDelayMs);
+          }
+          const result = await stopComponents(started, {
             logger,
             clock,
             shutdownTimeout,
             metrics,
             ...(tracer !== undefined ? { tracer } : {}),
           });
-          disposeHealth();
-          disposeSignals();
-          throw new StartupError(
-            `component "${component.name}" failed to start; boot aborted and rolled back`,
-            { component: component.name, cause },
-          );
+          failed = result.errors.length > 0 || result.timeouts.length > 0;
+          metrics.shutdownDuration.record(now() - perfStartedAt);
+          logger.info("lifecycle.shutdown.done", {
+            durationMs: clock.now() - startedAt,
+            errors: result.errors.length,
+            timeouts: result.timeouts.length,
+          });
+        } finally {
+          tryCleanup("disposeHealth", disposeHealth);
+          tryCleanup("disposeSignals", disposeSignals);
+          try {
+            exit(failed ? 1 : 0);
+          } finally {
+            resolveDone();
+          }
         }
-        log.debug("lifecycle.component.start.done", { component: component.name });
+      },
+    );
+    return shutdownPromise;
+  }
+
+  function tryCleanup(name: string, cleanup: () => void): void {
+    try {
+      cleanup();
+    } catch (error) {
+      logger.error(`lifecycle.shutdown.cleanup.error`, {
+        cleanup: name,
+        error: String(error),
+      });
+    }
+  }
+
+  // ---- Ordered start with rollback on failure ----------------------------
+  const bootStartedAt = clock.now();
+  const bootPerfStartedAt = now();
+  await withSpan(tracer, "lifecycle.boot", { kind: "internal" }, async () => {
+    try {
+      for (const component of components) {
+        if (shutdownPromise) break;
+        const log = componentLogger(logger, component.name);
+        if (typeof component.start === "function") {
+          log.debug("lifecycle.component.start.start", { component: component.name });
+          const startPerfAt = now();
+          const outcome = await withSpan(
+            tracer,
+            "lifecycle.component.start",
+            { kind: "internal", attributes: { component: component.name } },
+            () => runPhase((ctx) => component.start!(ctx), log, startTimeout, clock),
+          );
+          metrics.startDuration.record(now() - startPerfAt, {
+            component: component.name,
+            outcome:
+              outcome.kind === "ok"
+                ? "ok"
+                : outcome.kind === "timeout"
+                  ? "timeout"
+                  : "error",
+          });
+          if (outcome.kind !== "ok") {
+            const cause =
+              outcome.kind === "error"
+                ? outcome.error
+                : new Error(`start() exceeded its ${startTimeout}ms timeout`);
+            log.error("lifecycle.component.start.error", {
+              component: component.name,
+              error: String(cause),
+            });
+            // Roll back the components that did start, in reverse, then bail.
+            await stopComponents(started, {
+              logger,
+              clock,
+              shutdownTimeout,
+              metrics,
+              ...(tracer !== undefined ? { tracer } : {}),
+            });
+            disposeHealth();
+            disposeSignals();
+            throw new StartupError(
+              `component "${component.name}" failed to start; boot aborted and rolled back`,
+              { component: component.name, cause },
+            );
+          }
+          log.debug("lifecycle.component.start.done", { component: component.name });
+        }
+        started.push(component);
+        if (shutdownPromise) {
+          break;
+        }
       }
-      started.push(component);
+    } finally {
+      startupFinished = true;
+      resolveStartupFinished();
     }
   });
+
+  if (shutdownPromise) {
+    await shutdownPromise;
+  }
 
   if (!shutdownPromise) {
     ready = true;

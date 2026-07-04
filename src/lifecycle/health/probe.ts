@@ -79,13 +79,23 @@ export function createProbe(options: ProbeOptions = {}): Probe {
     let status: HealthStatus = "healthy";
     let criticalUnhealthy = false;
 
-    for (const c of checks) {
-      const { result, durationMs } = await runCheck(
-        c,
-        clock,
-        checkTimeout,
-        logger,
-      );
+    const settled = await Promise.allSettled(
+      checks.map((c) => runCheck(c, clock, checkTimeout, logger)),
+    );
+
+    for (let i = 0; i < checks.length; i++) {
+      const c = checks[i]!;
+      const item = settled[i]!;
+      const { result, durationMs } =
+        item.status === "fulfilled"
+          ? item.value
+          : {
+              result: {
+                status: "unhealthy" as const,
+                detail: item.reason instanceof Error ? item.reason.message : String(item.reason),
+              },
+              durationMs: 0,
+            };
       results[c.name] = result;
       metrics.healthCheckDuration.record(durationMs, {
         check: c.name,

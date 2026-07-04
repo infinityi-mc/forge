@@ -37,7 +37,7 @@ const DEFAULT_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
 export function installSignalHandlers(
   options: SignalHandlerOptions,
 ): () => void {
-  const signals = options.signals ?? DEFAULT_SIGNALS;
+  const signals = [...new Set(options.signals ?? DEFAULT_SIGNALS)];
   const forceExitOnSecond = options.forceExitOnSecond ?? true;
   const source: SignalSource = options.source ?? (process as SignalSource);
   const exit: ExitFn = options.exit ?? ((code) => process.exit(code));

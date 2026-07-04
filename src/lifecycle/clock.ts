@@ -34,6 +34,7 @@ export const realClock: Clock = {
       }, ms);
       const onAbort = (): void => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         reject(signal!.reason);
       };
       signal?.addEventListener("abort", onAbort, { once: true });

@@ -146,6 +146,32 @@ describe("boot — metric surface", () => {
     expect(exitCodes).toEqual([0]);
     expect(records.filter((r) => r.name === "lifecycle.ready")).toEqual([]);
   });
+
+  test("stops a component that emits a signal during startup", async () => {
+    const events: string[] = [];
+    const signal = "SIGUSR1" as NodeJS.Signals;
+    const app = await boot({
+      components: [
+        {
+          name: "signal",
+          start() {
+            events.push("signal:start");
+            process.emit(signal);
+          },
+          stop() {
+            events.push("signal:stop");
+          },
+        },
+      ],
+      installSignals: true,
+      signals: [signal],
+      exit: () => {},
+    });
+
+    await app.done;
+
+    expect(events).toEqual(["signal:start", "signal:stop"]);
+  });
 });
 
 describe("withSpan", () => {

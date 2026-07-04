@@ -98,6 +98,31 @@ describe("createProbe — readiness aggregation", () => {
     expect(health.checks.slow?.detail).toContain("budget");
   });
 
+  test("readiness checks run concurrently", async () => {
+    const clock = new TestClock();
+    const probe = createProbe({
+      clock,
+      checkTimeout: 1_000,
+      checks: [
+        {
+          name: "a",
+          check: (ctx) => clock.sleep(100, ctx.signal).then(() => ({ status: "healthy" as const })),
+        },
+        {
+          name: "b",
+          check: (ctx) => clock.sleep(100, ctx.signal).then(() => ({ status: "healthy" as const })),
+        },
+      ],
+    });
+
+    const pending = probe.check();
+    await clock.tickAsync(100);
+    const health = await pending;
+
+    expect(health.ready).toBe(true);
+    expect(Object.keys(health.checks)).toEqual(["a", "b"]);
+  });
+
   test("uptimeMs reflects the injected clock", async () => {
     const clock = new TestClock();
     const probe = createProbe({ clock });
@@ -166,6 +191,15 @@ describe("healthRoutes — k8s-shaped responses", () => {
     expect(routes.livenessPath).toBe("/alive");
     expect((await routes.handle(new Request("http://x/alive")))?.status).toBe(200);
     expect(await routes.handle(new Request("http://x/livez"))).toBeUndefined();
+  });
+
+  test("rejects identical liveness and readiness paths", () => {
+    expect(() =>
+      healthRoutes(createProbe(), {
+        livenessPath: "/healthz",
+        readinessPath: "/healthz",
+      }),
+    ).toThrow("distinct");
   });
 });
 
