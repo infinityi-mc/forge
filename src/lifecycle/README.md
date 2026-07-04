@@ -36,8 +36,9 @@ It is **not** a process supervisor, a clustering manager, a service mesh, or a D
 
 ### Module Adapters
 
-First-class module adapters (`forge/lifecycle/adapters`) so the Quick Start `components: [db, http, …]` "just works". Each wraps a Forge object into a `Component` with a sensible `healthcheck`, typed against a minimal structural `*Like` interface — **no hard dependency** on the other modules (the real objects already conform). Every adapter accepts an optional `healthcheck` override.
+First-class module adapters (`forge/lifecycle/adapters`) so the Quick Start `components: [telemetry, db, http, …]` "just works". Each wraps a Forge object into a `Component` with a sensible `healthcheck` when one can be derived, typed against a minimal structural `*Like` interface — **no hard dependency** on the other modules (the real objects already conform). Every adapter accepts an optional `healthcheck` override.
 
+- **`telemetryComponent(name, telemetry, opts?)`** — `stop` → `telemetry.shutdown()` to flush pending telemetry and release exporter resources. Place it early in `components` so it stops last and can observe shutdown.
 - **`databaseComponent(name, db, opts?)`** — `start` → `db.ping()` (fail-fast; disable with `pingOnStart: false`), `stop` → `db.shutdown()`, derived `healthcheck` pings and maps to `healthy` / `unhealthy`.
 - **`poolComponent(name, pool, opts?)`** — `stop` → `pool.shutdown()` (falls back to `drain()`); `healthcheck` from `stats()` (`draining` ⇒ `unhealthy`, else `healthy` with `{ active, idle, waiting }`).
 - **`httpServerComponent(name, server, opts?)`** — `stop` → `server.stop(true)` to drain in-flight requests (`closeActiveConnections` configurable). Pair with `preStopDelayMs` so the LB sees `/readyz → 503` before the drain.
@@ -53,7 +54,7 @@ The dependency-ordered component list reads directly:
 ```ts
 import {
   forge,
-  asComponent,
+  telemetryComponent,
   databaseComponent,
   httpServerComponent,
   consumerComponent,
@@ -64,7 +65,7 @@ const app = await forge.boot({
   config,
   components: [
     // Dependency order — stopped in strict reverse.
-    asComponent("telemetry", { stop: () => telemetry.shutdown() }),
+    telemetryComponent("telemetry", telemetry),
     databaseComponent("db", db), // ping on start, shutdown on stop, healthcheck
     consumerComponent("consumer", consumer), // stops before the db (reverse order)
     httpServerComponent("http", server), // stop(true) drains in-flight requests
@@ -149,7 +150,8 @@ src/lifecycle/
 ├── phase.ts        # silent logger, per-component child logger, bounded runPhase()
 ├── observability.ts # lifecycle.* metric surface + withSpan (opt-in, guarded)
 ├── adapters/
-│   ├── index.ts    # databaseComponent, httpServerComponent, messaging adapters
+│   ├── index.ts    # telemetryComponent, databaseComponent, httpServerComponent, messaging adapters
+│   ├── telemetry.ts # telemetryComponent
 │   ├── data.ts     # databaseComponent, poolComponent
 │   ├── http.ts     # httpServerComponent
 │   ├── messaging.ts # messageBus/consumer/relay/workerComponent

@@ -8,6 +8,7 @@ import {
   messageBusComponent,
   poolComponent,
   relayComponent,
+  telemetryComponent,
   workerComponent,
 } from "../../src/lifecycle/adapters";
 import type { CircuitBreakerState } from "../../src/lifecycle/adapters";
@@ -27,6 +28,39 @@ const HEALTH_CTX: HealthContext = {
     },
   },
 };
+
+describe("telemetryComponent", () => {
+  test("stops telemetry by calling shutdown exactly once and has no start hook", async () => {
+    const calls: string[] = [];
+    const c = telemetryComponent("telemetry", {
+      shutdown: () => {
+        calls.push("shutdown");
+      },
+    });
+
+    expect(c.start).toBeUndefined();
+
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+
+    expect(calls).toEqual(["shutdown"]);
+  });
+
+  test("no healthcheck is derived by default", () => {
+    const c = telemetryComponent("telemetry", { shutdown: () => {} });
+    expect(c.healthcheck).toBeUndefined();
+  });
+
+  test("a custom healthcheck overrides the absent derived one", async () => {
+    const c = telemetryComponent("telemetry", { shutdown: () => {} }, {
+      healthcheck: () => ({ status: "degraded", detail: "exporter lag" }),
+    });
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "exporter lag",
+    });
+  });
+});
 
 describe("databaseComponent", () => {
   test("pings on start, shuts down on stop, and derives a healthcheck", async () => {
