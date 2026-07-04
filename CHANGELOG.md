@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 - 2026-07-04
+
+### Added
+
+- Added first-class lifecycle adapters for additional Forge modules: `telemetryComponent()`, `configComponent()`, `preferenceComponent()`, and `securityComponent()`.
+- Added structural adapter seams for telemetry, dynamic config, preferences, and security JWKS health without hard imports from sibling modules.
+- Added lifecycle adapter tests covering shutdown delegation, healthcheck passthrough, derived security health, and security degraded-readiness behavior.
+
+### Changed
+
+- Updated lifecycle, README, and guide examples to prefer first-class lifecycle adapters over local `asComponent` boilerplate where Forge primitives already match an official adapter.
+- Updated security guide examples to use the current JWKS key-store option names and lifecycle component shapes.
+
+### Compatibility
+
+- No breaking API changes are expected. The new adapters are additive exports from `forge/lifecycle` and `forge/lifecycle/adapters`.
+
 ## 1.1.0 - 2026-07-04
 
 ### Added

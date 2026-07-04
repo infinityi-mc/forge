@@ -82,28 +82,20 @@ bun add @infinityi/forge
 ### Bootstrapping an App
 
 ```typescript
-import { forge, asComponent } from '@infinityi/forge/lifecycle';
+import { forge, databaseComponent, httpServerComponent } from '@infinityi/forge/lifecycle';
 import { serve, type HttpServer } from '@infinityi/forge/http';
 import { config } from './config';
 import { db } from './data';
 import { router } from './http';
 
-let server: HttpServer | undefined;
+const server: HttpServer = serve(router, { port: config.http.port });
 
 const app = await forge.boot({
   config,
   logger: console,
   components: [
-    asComponent('db', {
-      start: () => db.ping(),
-      stop: () => db.shutdown(),
-    }),
-    asComponent('http', {
-      start: () => {
-        server = serve(router, { port: config.http.port });
-      },
-      stop: () => server?.stop(true),
-    }),
+    databaseComponent('db', db),
+    httpServerComponent('http', server),
   ],
   shutdownTimeout: 30_000, // Graceful shutdown window
 });
