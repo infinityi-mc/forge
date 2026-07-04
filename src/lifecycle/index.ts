@@ -10,8 +10,8 @@
  *
  * This entry-point exposes the {@link forge} façade, {@link boot},
  * {@link asComponent}, the error taxonomy, the core contracts, the health-probe
- * surface, and the official module adapters (`databaseComponent`,
- * `httpServerComponent`, the messaging adapters).
+ * surface, and the official module adapters (`telemetryComponent`,
+ * `databaseComponent`, `httpServerComponent`, the messaging adapters).
  *
  * @example Minimal usage
  * ```ts
@@ -54,6 +54,7 @@ export {
   messageBusComponent,
   poolComponent,
   relayComponent,
+  telemetryComponent,
   workerComponent,
 } from "./adapters";
 export type {
@@ -65,6 +66,7 @@ export type {
   MessageBusLike,
   PoolLike,
   StartStopLike,
+  TelemetryLike,
 } from "./adapters";
 
 export { createProbe, healthRoutes, startHealthServer } from "./health";

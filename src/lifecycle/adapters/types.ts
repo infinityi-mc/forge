@@ -1,13 +1,12 @@
 /**
  * Structural seams for the official `forge/lifecycle/adapters`.
  *
- * The adapters wrap `forge/data`, `forge/http`, `forge/messaging`, and
- * `forge/resilience` objects into {@link Component}s, but — like the structural
- * telemetry seam — they do so **without** hard-importing those modules. Each
- * adapter is typed against the
+ * The adapters wrap `forge/telemetry`, `forge/data`, `forge/http`,
+ * `forge/messaging`, and `forge/resilience` objects into {@link Component}s, but
+ * they do so **without** hard-importing those modules. Each adapter is typed against the
  * minimal `*Like` interface describing only the methods it touches; the real
  * `Db`, `Pool`, `HttpServer`, `MessageConsumer`, `OutboxRelay`, `Worker`,
- * `MessageBus`, `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
+ * `Telemetry`, `MessageBus`, `CircuitBreakerPolicy`, and `BulkheadPolicy` already satisfy
  * these structurally, so the adapters are drop-in with zero changes to the other
  * modules.
  *
@@ -26,6 +25,12 @@ export interface AdapterOptions {
   readonly healthcheck?: (
     ctx: HealthContext,
   ) => Promise<HealthResult> | HealthResult;
+}
+
+/** The slice of `forge/telemetry`'s `Telemetry` handle the {@link telemetryComponent} uses. */
+export interface TelemetryLike {
+  /** Flush pending telemetry and release exporter resources. */
+  shutdown(): Promise<void> | void;
 }
 
 /** The slice of `forge/data`'s `Db` the {@link databaseComponent} uses. */

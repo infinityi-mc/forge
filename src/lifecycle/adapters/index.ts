@@ -1,6 +1,7 @@
 /**
- * `forge/lifecycle/adapters` — thin official adapters that wrap `forge/data`,
- * `forge/http`, `forge/messaging`, and `forge/resilience` objects into {@link Component}s with
+ * `forge/lifecycle/adapters` — thin official adapters that wrap
+ * `forge/telemetry`, `forge/data`, `forge/http`, `forge/messaging`, and
+ * `forge/resilience` objects into {@link Component}s with
  * sensible `healthcheck`s, so the Quick Start `components: [db, http, ...]`
  * "just works".
  *
@@ -20,6 +21,7 @@ export {
   workerComponent,
 } from "./messaging";
 export { bulkheadComponent, circuitBreakerComponent } from "./resilience";
+export { telemetryComponent } from "./telemetry";
 
 export type {
   AdapterOptions,
@@ -35,4 +37,5 @@ export type {
   MessageBusLike,
   PoolLike,
   StartStopLike,
+  TelemetryLike,
 } from "./types";
