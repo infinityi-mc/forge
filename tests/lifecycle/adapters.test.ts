@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   bulkheadComponent,
+  configComponent,
   consumerComponent,
   circuitBreakerComponent,
   databaseComponent,
@@ -58,6 +59,39 @@ describe("telemetryComponent", () => {
     expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
       status: "degraded",
       detail: "exporter lag",
+    });
+  });
+});
+
+describe("configComponent", () => {
+  test("stops dynamic config by calling shutdown exactly once and has no start hook", async () => {
+    const calls: string[] = [];
+    const c = configComponent("config", {
+      shutdown: () => {
+        calls.push("shutdown");
+      },
+    });
+
+    expect(c.start).toBeUndefined();
+
+    await c.stop?.({ signal: new AbortController().signal, logger: HEALTH_CTX.logger });
+
+    expect(calls).toEqual(["shutdown"]);
+  });
+
+  test("no healthcheck is derived by default", () => {
+    const c = configComponent("config", { shutdown: () => {} });
+    expect(c.healthcheck).toBeUndefined();
+  });
+
+  test("a custom healthcheck overrides the absent derived one", async () => {
+    const c = configComponent("config", { shutdown: () => {} }, {
+      healthcheck: () => ({ status: "degraded", detail: "provider lag" }),
+    });
+
+    expect(await c.healthcheck?.(HEALTH_CTX)).toEqual({
+      status: "degraded",
+      detail: "provider lag",
     });
   });
 });
