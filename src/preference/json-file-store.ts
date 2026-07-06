@@ -10,7 +10,7 @@
 
 import { mkdirSync, watch, type FSWatcher } from "node:fs";
 import { chmod, mkdir, open, rename, rm } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type {
   PreferenceSnapshot,
   PreferenceSnapshotHandler,
@@ -36,7 +36,7 @@ export type JsonFilePreferenceStore = PreferenceStore;
 export function jsonFileStore(
   options: JsonFileStoreOptions,
 ): JsonFilePreferenceStore {
-  const filePath = options.path;
+  const filePath = resolve(options.path);
   const name = options.name ?? "json-file";
   const debounceMs = Math.max(0, options.debounceMs ?? 0);
   const watchDebounceMs = Math.max(0, options.watchDebounceMs ?? 25);

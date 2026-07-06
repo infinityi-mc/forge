@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   definePreferences,
   jsonFileStore,
@@ -323,6 +323,25 @@ describe("jsonFileStore", () => {
       );
       await prefs.shutdown();
     });
+  });
+
+  test("opt-in watch registers successfully for same-directory relative paths", async () => {
+    const file = "./test-relative-watch.json";
+    const store = jsonFileStore({ path: file, watch: true, watchDebounceMs: 5 });
+    const observed: PreferenceSnapshot[] = [];
+    const unsubscribe = store.watch?.((snapshot) => {
+      observed.push(snapshot);
+    });
+
+    try {
+      await writeSnapshot(resolve(file), { "appearance.theme": "dark" });
+      await waitFor(() => observed.length === 1);
+      expect(observed).toEqual([{ "appearance.theme": "dark" }]);
+    } finally {
+      unsubscribe?.();
+      await store.shutdown?.();
+      await rm(resolve(file), { force: true }).catch(() => {});
+    }
   });
 });
 
