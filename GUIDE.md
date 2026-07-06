@@ -1191,7 +1191,7 @@ Every leaf in a preference schema **must** declare `.default(...)` or `.optional
 
 All stores implement `PreferenceStore` interface:
 
-* **`jsonFileStore(opts)`**: Atomic writes with temporary file + rename, corrupt-file recovery, write debouncing, and filesystem watchers.
+* **`jsonFileStore(opts)`**: Atomic writes with temporary file + rename, corrupt-file recovery, write debouncing, and filesystem watchers. Relative paths are resolved from the current working directory before writes and watcher registration.
   * `path`: `string` (required)
   * `debounceMs`: `number` (delay writes)
   * `watch`: `boolean` (live file-reloading)

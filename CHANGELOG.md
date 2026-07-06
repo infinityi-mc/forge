@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.3.0 - 2026-07-06
+
+### Added
+
+- Added trailing-`*` prefix wildcard topic subscriptions for built-in messaging transports, so consumers can subscribe to prefixes such as `system.*` across memory, SQLite, and PostgreSQL transports.
+- Added messaging conformance coverage for prefix wildcard subscriptions so custom transports can validate the same routing behavior.
+
+### Fixed
+
+- Resolved `jsonFileStore` paths to absolute paths before registering file watchers, fixing watched same-directory relative paths such as `./preferences.json`.
+
+### Changed
+
+- Updated messaging and preference documentation for prefix wildcard subscriptions and absolute path resolution in `jsonFileStore`.
+
+### Compatibility
+
+- No breaking API changes are expected. Prefix wildcard matching is additive; non-trailing `*` characters remain literal, and `*` continues to mean catch-all.
+
 ## 1.2.1 - 2026-07-04
 
 ### Fixed

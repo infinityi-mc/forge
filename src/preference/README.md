@@ -68,7 +68,7 @@ The live view is `defaults + explicit`. Resetting deletes an explicit value, so 
 Built-in stores:
 
 - `memoryStore(initial?)` - in-memory test/local store with watch support.
-- `jsonFileStore({ path, debounceMs?, watch? })` - atomic JSON file writes with optional external reloads.
+- `jsonFileStore({ path, debounceMs?, watch? })` - atomic JSON file writes with optional external reloads. Relative paths are resolved from the current working directory before writes and watcher registration.
 - `sqliteStore({ path | database, table? })` - transactional key/value rows in `bun:sqlite`.
 
 Custom stores implement:

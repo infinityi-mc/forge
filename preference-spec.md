@@ -136,7 +136,7 @@ interface PreferenceStore {
 }
 ```
 
-Built-ins: `jsonFileStore({ path, debounceMs?, watch? })`, `sqliteStore({ path | database, table? })`, `memoryStore(initial?)` (testing).
+Built-ins: `jsonFileStore({ path, debounceMs?, watch? })` (relative paths resolve from the current working directory), `sqliteStore({ path | database, table? })`, `memoryStore(initial?)` (testing).
 
 ### Error taxonomy
 
