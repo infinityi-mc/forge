@@ -937,7 +937,7 @@ await consumer.stop();
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `transport` | `Transport` | required | Source broker |
-| `topic` | `string` | required | Topic to subscribe to |
+| `topic` | `string` | required | Topic to subscribe to. Built-ins support exact topics, `*`, and trailing-`*` prefixes like `system.*` |
 | `concurrency` | `number` | `1` | Parallel message processing |
 | `handler` | `MessageHandler` | required | Process each message |
 | `inbox` | `InboxStore` | — | Dedup store (exactly-once) |

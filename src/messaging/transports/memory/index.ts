@@ -3,7 +3,8 @@
  * single-process fan-out.
  *
  * Records published with `send` are routed to every subscription whose
- * topic matches the record's `type` (or the `"*"` catch-all). Each
+ * topic matches the record's `type` (`"*"` catch-all, exact topic, or
+ * trailing-`*` prefix wildcard). Each
  * subscription runs a bounded worker pool (its `concurrency`) that pulls
  * deliveries from an internal queue and invokes `onMessage`.
  *
@@ -17,6 +18,7 @@
  */
 
 import { NOOP_LOGGER } from "../../observability";
+import { topicMatches } from "../../topic";
 import type {
   Logger,
   Transport,
@@ -52,10 +54,6 @@ interface Subscription {
   readonly waiters: Array<() => void>;
   closed: boolean;
   workers: Promise<void>[];
-}
-
-function matches(topic: string, type: string): boolean {
-  return topic === "*" || topic === type;
 }
 
 /** Create an in-process {@link Transport}. */
@@ -140,7 +138,7 @@ export function inMemoryTransport(
       for (const record of records) {
         for (const sub of subscriptions) {
           if (sub.closed) continue;
-          if (!matches(sub.topic, record.type)) continue;
+          if (!topicMatches(sub.topic, record.type)) continue;
           enqueue(sub, { record, attempt: 0 });
         }
       }

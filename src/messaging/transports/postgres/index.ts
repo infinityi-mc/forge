@@ -20,6 +20,7 @@
 
 import { NOOP_LOGGER } from "../../observability";
 import { TransportError } from "../../errors";
+import { topicWildcardPrefix } from "../../topic";
 import type {
   Clock,
   Logger,
@@ -188,12 +189,18 @@ export function postgresTransport(
 
   const claim = async (topic: string): Promise<MessageRow | undefined> => {
     const now = clock.now();
+    const prefix = topicWildcardPrefix(topic) ?? "";
     // Atomic claim: lock the next visible matching row with SKIP LOCKED
     // and bump its visibility in a single round-trip.
     const rows = await query<MessageRow>(
       `WITH next AS (
          SELECT seq FROM ${table}
-           WHERE visible_at <= $1 AND ($2 = '*' OR type = $2)
+           WHERE visible_at <= $1
+             AND (
+               $2 = '*'
+               OR type = $2
+               OR ($4::text <> '' AND left(type, length($4::text)) = $4::text)
+             )
            ORDER BY seq ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1
@@ -201,7 +208,7 @@ export function postgresTransport(
        UPDATE ${table} t SET visible_at = $3
          FROM next WHERE t.seq = next.seq
          RETURNING t.seq, t.type, t.msg_id, t.headers, t.body, t.attempt`,
-      [now, topic, now + visibilityTimeoutMs],
+      [now, topic, now + visibilityTimeoutMs, prefix],
     );
     return rows[0];
   };

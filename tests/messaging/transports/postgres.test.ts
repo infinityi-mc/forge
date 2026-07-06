@@ -9,6 +9,7 @@ import {
   type PostgresClientLike,
   type PostgresQueryResult,
 } from "../../../src/messaging/transports/postgres";
+import { topicMatches } from "../../../src/messaging/topic";
 import type { Message } from "../../../src/messaging";
 
 interface Row {
@@ -65,9 +66,7 @@ class FakePostgresClient implements PostgresClientLike {
       const topic = params[1] as string;
       const lockUntil = params[2] as number;
       const candidate = this.rows
-        .filter(
-          (r) => r.visible_at <= now && (topic === "*" || r.type === topic),
-        )
+        .filter((r) => r.visible_at <= now && topicMatches(topic, r.type))
         .sort((a, b) => a.seq - b.seq)[0];
       if (candidate === undefined) return { rows: [], rowCount: 0 };
       candidate.visible_at = lockUntil;

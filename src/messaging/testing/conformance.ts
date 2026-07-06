@@ -170,6 +170,47 @@ export const STANDARD_MESSAGING_SCENARIOS: readonly MessagingConformanceScenario
     },
   },
   {
+    name: "routes messages to prefix wildcard topic subscriptions",
+    async run(factory) {
+      const transport = await factory();
+      const bus = createMessageBus({ transport });
+      const received: string[] = [];
+      const consumer = createConsumer({
+        transport,
+        topic: "conformance.topic.*",
+        handler: (msg) => {
+          received.push(msg.type);
+        },
+      });
+
+      await withConsumer(consumer, async () => {
+        await bus.publishBatch([
+          { type: "conformance.topic.created", payload: {} },
+          { type: "conformance.topic.updated.v2", payload: {} },
+          { type: "conformance.topical.created", payload: {} },
+        ]);
+        await waitFor(() => received.length === 2, "prefix wildcard deliveries");
+        // Give an incorrect non-prefix delivery a chance to arrive.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      assert(received.length === 2, "expected exactly two prefix deliveries");
+      assert(
+        received.includes("conformance.topic.created"),
+        "prefix wildcard received the direct child topic",
+      );
+      assert(
+        received.includes("conformance.topic.updated.v2"),
+        "prefix wildcard received a deeper child topic",
+      );
+      assert(
+        !received.includes("conformance.topical.created"),
+        "prefix wildcard did not receive an overlapping non-prefix topic",
+      );
+      await bus.shutdown();
+    },
+  },
+  {
     name: "redelivers an at-least-once message after a handler failure",
     async run(factory) {
       const transport = await factory();

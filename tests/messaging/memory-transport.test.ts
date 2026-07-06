@@ -58,6 +58,30 @@ describe("inMemoryTransport", () => {
     expect(all.sort()).toEqual(["x", "y"]);
   });
 
+  test("a prefix wildcard subscription receives matching child topics", async () => {
+    const transport = inMemoryTransport();
+    const system: string[] = [];
+    await transport.subscribe({
+      topic: "system.*",
+      onMessage: (d) => {
+        system.push(d.record.type);
+        d.ack();
+      },
+    });
+
+    await transport.send([
+      record("system.created"),
+      record("system.updated.v2"),
+      record("systemic.created"),
+      record("system"),
+    ]);
+    await waitFor(() => system.length === 2);
+    await new Promise((r) => setTimeout(r, 30));
+    await transport.shutdown();
+
+    expect(system.sort()).toEqual(["system.created", "system.updated.v2"]);
+  });
+
   test("drops a perpetually-nacked record after maxDeliveries", async () => {
     const transport = inMemoryTransport({ maxDeliveries: 3 });
     let deliveries = 0;

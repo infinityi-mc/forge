@@ -19,7 +19,9 @@ with at-least-once delivery for _effective exactly-once_ consumption.
   encodes via the `Codec`, and sends through a `Transport`. No global state.
 - **`createConsumer`** — subscribes to a topic, decodes deliveries into
   `Message`s, runs the handler with bounded `concurrency`, and acks on success
-  / nacks on failure (at-least-once redelivery).
+  / nacks on failure (at-least-once redelivery). Built-in transports support
+  exact topics, `*` catch-all, and trailing-`*` prefix wildcards like
+  `system.*`.
 - **`jsonCodec`** — the default `JSON` + UTF-8 codec; bring your own `Codec`
   for other wire formats.
 - **`inMemoryTransport`** (`forge/messaging/transports/memory`) — in-process

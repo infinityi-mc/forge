@@ -129,7 +129,10 @@ export interface TransportDelivery {
  * {@link concurrency} at a time (prefetch).
  */
 export interface TransportSubscription {
-  /** Topic to receive from. Transports may support a `"*"` catch-all. */
+  /**
+   * Topic to receive from. Built-ins support exact topics, `"*"`, and
+   * trailing-`*` prefixes.
+   */
   readonly topic: string;
   /** Max in-flight deliveries dispatched concurrently. Default 1. */
   readonly concurrency?: number;
@@ -193,7 +196,10 @@ export interface MessageConsumer {
 export interface ConsumerOptions {
   /** The broker adapter to receive from. */
   readonly transport: Transport;
-  /** Topic to subscribe to. */
+  /**
+   * Topic to subscribe to. Built-ins support exact topics, `"*"`, and
+   * trailing-`*` prefixes.
+   */
   readonly topic: string;
   /** The consume callback. */
   readonly handler: MessageHandler;

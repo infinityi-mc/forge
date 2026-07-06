@@ -18,6 +18,7 @@
 import { Database } from "bun:sqlite";
 import { NOOP_LOGGER } from "../../observability";
 import { TransportError } from "../../errors";
+import { topicWildcardPrefix } from "../../topic";
 import type {
   Clock,
   Logger,
@@ -112,9 +113,17 @@ export function sqliteTransport(
     `INSERT INTO ${table} (type, msg_id, headers, body, attempt, visible_at)
      VALUES (?, ?, ?, ?, 0, 0)`,
   );
-  const nextStmt = db.query<MessageRow, [number, string, string]>(
-    `SELECT seq, type, msg_id, headers, body, attempt FROM ${table}
-       WHERE visible_at <= ? AND (? = '*' OR type = ?)
+  const nextStmt = db.query<
+    MessageRow,
+    [number, string, string, string, string, string]
+  >(
+     `SELECT seq, type, msg_id, headers, body, attempt FROM ${table}
+       WHERE visible_at <= ?
+         AND (
+           ? = '*'
+           OR type = ?
+           OR (? <> '' AND substr(type, 1, length(?)) = ?)
+         )
        ORDER BY seq ASC LIMIT 1`,
   );
   const lockStmt = db.query(`UPDATE ${table} SET visible_at = ? WHERE seq = ?`);
@@ -128,7 +137,8 @@ export function sqliteTransport(
   // row.
   const claim = db.transaction((topic: string): MessageRow | null => {
     const now = clock.now();
-    const row = nextStmt.get(now, topic, topic);
+    const prefix = topicWildcardPrefix(topic) ?? "";
+    const row = nextStmt.get(now, topic, topic, prefix, prefix, prefix);
     if (row === null) return null;
     lockStmt.run(now + visibilityTimeoutMs, row.seq);
     return row;
